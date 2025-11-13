@@ -1,0 +1,647 @@
+"""
+FastAPI web application for mus2pic - Lightweight and fast!
+"""
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Optional
+import os
+import time
+import asyncio
+import random
+import hashlib
+from contextlib import redirect_stdout
+from io import StringIO
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from test import download_audio, analyze_audio, audio_to_prompt, audio_to_prompt_v2, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
+from model_options import generate_with_lcm, generate_with_sd14, generate_with_sd21, generate_with_turbo, generate_with_lcm_sd21, generate_with_sdxl_lightning, MODEL_REGISTRY
+
+app = FastAPI(title="Mus2Pic", description="Transform music into visual art")
+
+# Configuration
+UPLOAD_FOLDER = 'static/generated'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs('static', exist_ok=True)
+
+# Thread pool for parallel image generation
+executor = ThreadPoolExecutor(max_workers=4)
+
+# WebSocket connections manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+    
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+    
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+    
+    async def send_personal_message(self, message: dict, websocket: WebSocket):
+        try:
+            await websocket.send_json(message)
+        except:
+            pass
+    
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections.copy():
+            try:
+                await connection.send_json(message)
+            except:
+                self.disconnect(connection)
+
+manager = ConnectionManager()
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Request models
+class PromptRequest(BaseModel):
+    url: str
+    duration: Optional[int] = None  # Duration in seconds. None or 0 means full length
+    prompt_version: str = "v2"  # "v1" or "v2" - which prompt generation function to use
+
+class ImageRequest(BaseModel):
+    prompt: str
+    negative_prompt: str = ""
+    num_steps: int = 8
+    num_variations: int = 1
+    model: str = "lcm"  # Model selection: lcm, sd14, sd21, turbo
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Serve the main page"""
+    with open("templates/index.html", "r") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Serve favicon"""
+    favicon_path = os.path.join("static", "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type='image/x-icon')
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
+@app.get("/api/models")
+async def get_models():
+    """Get available models with their metadata"""
+    return {
+        "success": True,
+        "models": MODEL_REGISTRY
+    }
+
+@app.post("/api/generate-prompt")
+async def generate_prompt(request: PromptRequest):
+    """Generate prompt from YouTube URL"""
+    try:
+        youtube_url = request.url.strip()
+        
+        if not youtube_url:
+            raise HTTPException(status_code=400, detail="YouTube URL is required")
+        
+        # Parse duration - None or 0 means full length
+        duration = request.duration if request.duration and request.duration > 0 else None
+        
+        # Suppress console output during processing
+        f = StringIO()
+        with redirect_stdout(f):
+            # Step 1: Download audio and get metadata
+            audio_path, band_name, song_title = download_audio(youtube_url)
+            
+            # Step 2: Analyze audio with specified duration
+            features = analyze_audio(audio_path, duration=duration)
+            
+            # Step 3: Generate prompt (v1 or v2)
+            genre_hint = None
+            genre_source = None
+            
+            if request.prompt_version == "v2":
+                # Try to get genre from multiple sources (in order of preference)
+                raw_genres = None
+                genre_source = None
+                
+                # 1. Try metadata first (fastest, if available)
+                metadata_genre = get_genre_from_metadata(audio_path)
+                if metadata_genre:
+                    # Convert string to list for normalize_genre
+                    raw_genres = [metadata_genre]
+                    genre_source = "metadata"
+                else:
+                    # 2. Try Spotify API (most accurate, with caching)
+                    # get_genre_from_spotify returns raw genres list (or None)
+                    raw_genres = get_genre_from_spotify(band_name, song_title)
+                    if raw_genres:
+                        genre_source = "spotify"
+                    else:
+                        # 3. Fallback: infer from audio features
+                        inferred_genre = infer_genre_from_features(features)
+                        if inferred_genre:
+                            raw_genres = [inferred_genre]
+                            genre_source = "inferred"
+                        else:
+                            # 4. Final fallback: use default
+                            genre_source = "default"
+                            raw_genres = None  # Will normalize to "abstract" in audio_to_prompt_v2
+                
+                # audio_to_prompt_v2 will normalize raw_genres and generate prompt
+                prompt, negative_prompt = audio_to_prompt_v2(
+                    features, 
+                    band_name=band_name, 
+                    song_title=song_title,
+                    raw_genres=raw_genres  # Can be list or None
+                )
+                # Get normalized genre for response (audio_to_prompt_v2 normalizes it internally)
+                refined_genre = normalize_genre(raw_genres) if raw_genres else "abstract"
+            else:
+                # Use v1 (default) - no genre needed
+                genre_source = "none"
+                refined_genre = None
+                prompt, negative_prompt = audio_to_prompt(features, band_name=band_name, song_title=song_title)
+        
+        # Clean up audio file
+        try:
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+        except:
+            pass
+        
+        # Convert numpy types to native Python types for JSON serialization
+        return {
+            'success': True,
+            'prompt': prompt,
+            'negative_prompt': negative_prompt,
+            'band': band_name,
+            'song': song_title,
+            'from_cache': False,  # Prompt caching removed
+            'genre_hint': refined_genre if request.prompt_version == "v2" else None,  # Refined genre (if v2)
+            'genre_source': genre_source,  # Where genre came from: "metadata", "spotify", "inferred", "default", or "none"
+            'features': {
+                'tempo': float(round(features.get('tempo', 0), 2)),
+                'brightness': float(round(features.get('brightness', 0), 2)),
+                'energy': float(round(features.get('energy', 0), 4))
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def generate_single_image(prompt, negative_prompt, output_path, num_steps, variation_index, total_variations, progress_queue=None, width=512, height=512, seed=None, model="lcm"):
+    """Generate a single image (runs in thread pool)"""
+    try:
+        # Send initial progress update
+        if progress_queue:
+            try:
+                progress_queue.put_nowait({
+                    'type': 'progress',
+                    'variation': variation_index + 1,
+                    'total_variations': total_variations,
+                    'step': 0,
+                    'total_steps': num_steps,
+                    'progress': (variation_index / total_variations) * 100
+                })
+            except:
+                pass
+        
+        # Create progress callback wrapper
+        def callback(step, total_steps):
+            if progress_queue:
+                # Ensure step is an integer (handle tensor conversion)
+                if hasattr(step, 'item'):
+                    step_int = int(step.item())
+                elif isinstance(step, (int, float)):
+                    step_int = int(step)
+                else:
+                    step_int = int(step)
+                
+                # Calculate overall progress across all variations
+                base_progress = (variation_index / total_variations) * 100
+                variation_progress = (step_int / total_steps) * (100 / total_variations)
+                overall_progress = base_progress + variation_progress
+                try:
+                    progress_queue.put_nowait({
+                        'type': 'progress',
+                        'variation': variation_index + 1,
+                        'total_variations': total_variations,
+                        'step': step_int,  # Use integer step
+                        'total_steps': total_steps,
+                        'progress': min(overall_progress, 99)
+                    })
+                except Exception as e:
+                    # Queue full, skip update (non-fatal)
+                    pass
+        
+        # Select model function
+        model_functions = {
+            "lcm": generate_with_lcm,
+            "sd14": generate_with_sd14,
+            "sd21": generate_with_sd21,
+            "turbo": generate_with_turbo,
+            "lcm_sd21": generate_with_lcm_sd21,
+            "sdxl_lightning": generate_with_sdxl_lightning
+        }
+        
+        if model not in model_functions:
+            model = "lcm"  # Default to LCM if invalid model
+        
+        generate_func = model_functions[model]
+        
+        # Models that support progress callbacks and return (path, seed, time)
+        models_with_callbacks = ["lcm", "lcm_sd21", "sdxl_lightning"]
+        
+        # Call the selected model function
+        if model in models_with_callbacks:
+            output_path, seed_used, gen_time = generate_func(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                output_path=output_path,
+                num_inference_steps=num_steps,
+                progress_callback=callback if progress_queue else None,
+                width=width,
+                height=height,
+                seed=seed
+            )
+        else:
+            # For other models, we need to add timing manually
+            start_time = time.time()
+            result = generate_func(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                output_path=output_path,
+                num_inference_steps=num_steps
+            )
+            gen_time = time.time() - start_time
+            
+            # Other models return different formats, normalize them to (path, seed, time)
+            if isinstance(result, tuple):
+                if len(result) >= 2:
+                    output_path, seed_used = result[0], result[1]
+                else:
+                    output_path, seed_used = result[0], None
+            else:
+                output_path = result
+                seed_used = None
+            
+            # Generate a seed for consistency if not provided
+            if seed_used is None:
+                seed_used = random.randint(0, 2**32 - 1) if seed is None else seed
+        
+        # Send generation time update
+        if progress_queue:
+            try:
+                progress_queue.put_nowait({
+                    'type': 'generation_time',
+                    'variation': variation_index + 1,
+                    'time': gen_time
+                })
+            except:
+                pass
+        
+        # Send completion progress for this variation
+        if progress_queue:
+            try:
+                progress_queue.put_nowait({
+                    'type': 'progress',
+                    'variation': variation_index + 1,
+                    'total_variations': total_variations,
+                    'step': num_steps,
+                    'total_steps': num_steps,
+                    'progress': min(((variation_index + 1) / total_variations) * 100, 99)
+                })
+            except:
+                pass
+        
+        return output_path, seed_used, gen_time
+    except Exception as e:
+        if progress_queue:
+            try:
+                progress_queue.put_nowait({
+                    'type': 'error',
+                    'variation': variation_index + 1,
+                    'error': str(e)
+                })
+            except:
+                pass
+        raise
+
+
+@app.post("/api/generate-image")
+async def generate_image(request: ImageRequest):
+    """Generate image(s) from prompt - supports multiple variations (parallel)"""
+    try:
+        prompt = request.prompt.strip()
+        negative_prompt = request.negative_prompt.strip()
+        num_steps = request.num_steps
+        num_variations = min(max(request.num_variations, 1), 4)  # Limit to 1-4 variations
+        model = request.model if request.model in MODEL_REGISTRY else "lcm"
+        
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt is required")
+        
+        # Use default steps for model if not specified
+        if num_steps == 8 and model in MODEL_REGISTRY:
+            num_steps = MODEL_REGISTRY[model].get("default_steps", 8)
+        
+        # Generate at full size (512x512)
+        width = 512
+        height = 512
+        
+        timestamp = int(time.time())
+        
+        # Suppress console output during image generation
+        f = StringIO()
+        with redirect_stdout(f):
+            # Generate multiple variations in parallel
+            loop = asyncio.get_event_loop()
+            tasks = []
+            
+            for i in range(num_variations):
+                filename = f'poster_{timestamp}_{i}.png'
+                output_path = os.path.join(UPLOAD_FOLDER, filename)
+                
+                # Submit to thread pool for parallel execution
+                task = loop.run_in_executor(
+                    executor,
+                    generate_single_image,
+                    prompt,
+                    negative_prompt,
+                    output_path,
+                    num_steps,
+                    i,
+                    num_variations,
+                    None,  # No progress callback for HTTP endpoint
+                    width,
+                    height,
+                    None,  # No seed - generate unique variations
+                    model  # Model selection
+                )
+                tasks.append((task, filename))
+            
+            # Wait for all images to complete
+            image_urls = []
+            generation_times = []
+            for task, filename in tasks:
+                try:
+                    output_path, seed_used, gen_time = await task
+                    image_urls.append({
+                        'url': f'/static/generated/{filename}',
+                        'filename': filename
+                    })
+                    generation_times.append(gen_time)
+                except Exception as e:
+                    print(f"Error generating variation: {e}")
+                    generation_times.append(None)
+        
+        return {
+            'success': True,
+            'images': image_urls,
+            'count': len(image_urls),
+            'generation_times': generation_times,
+            'total_time': sum(t for t in generation_times if t is not None)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@app.websocket("/ws/progress")
+async def websocket_progress(websocket: WebSocket):
+    """WebSocket endpoint for real-time progress updates"""
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Wait for client to send generation request
+            data = await websocket.receive_json()
+            
+            if data.get('type') == 'generate':
+                prompt = data.get('prompt', '').strip()
+                negative_prompt = data.get('negative_prompt', '').strip()
+                num_steps = data.get('num_steps', 8)
+                num_variations = min(max(data.get('num_variations', 1), 1), 4)
+                model = data.get('model', 'lcm')
+                if model not in MODEL_REGISTRY:
+                    model = 'lcm'
+                
+                if not prompt:
+                    await manager.send_personal_message({
+                        'type': 'error',
+                        'message': 'Prompt is required'
+                    }, websocket)
+                    continue
+                
+                # Use default steps for model if not specified
+                if num_steps == 8 and model in MODEL_REGISTRY:
+                    num_steps = MODEL_REGISTRY[model].get("default_steps", 8)
+                
+                # Generate at full size (512x512)
+                width = 512
+                height = 512
+                
+                timestamp = int(time.time())
+                image_urls = []
+                generation_times = []
+                
+                # Create progress queue for communication between threads and async
+                progress_queue = Queue()
+                monitor_running = True
+                
+                # Task to monitor progress queue and send updates via WebSocket
+                async def progress_monitor():
+                    while monitor_running:
+                        try:
+                            # Check for progress updates (non-blocking)
+                            try:
+                                progress_data = progress_queue.get_nowait()
+                                print(f"Progress update: {progress_data}")  # Debug
+                                await manager.send_personal_message(progress_data, websocket)
+                                
+                                # If error, break
+                                if progress_data.get('type') == 'error':
+                                    break
+                            except:
+                                # Queue empty, wait a bit
+                                await asyncio.sleep(0.1)
+                        except Exception as e:
+                            print(f"Progress monitor error: {e}")  # Debug
+                            break
+                
+                # Generate images in parallel
+                loop = asyncio.get_event_loop()
+                tasks = []
+                
+                for i in range(num_variations):
+                    filename = f'poster_{timestamp}_{i}.png'
+                    output_path = os.path.join(UPLOAD_FOLDER, filename)
+                    
+                    # Submit to thread pool
+                    task = loop.run_in_executor(
+                        executor,
+                        generate_single_image,
+                        prompt,
+                        negative_prompt,
+                        output_path,
+                        num_steps,
+                        i,
+                        num_variations,
+                        progress_queue,
+                        width,
+                        height,
+                        None,  # No seed - generate unique variations
+                        model  # Model selection
+                    )
+                    tasks.append((task, filename))
+                
+                # Start progress monitor
+                monitor_task = asyncio.create_task(progress_monitor())
+                
+                # Also start a fallback progress simulator in case callbacks don't work
+                async def fallback_progress():
+                    """Fallback progress if callbacks don't work"""
+                    await asyncio.sleep(1)  # Wait a bit for real callbacks
+                    step = 0
+                    while monitor_running and step < num_steps:
+                        await asyncio.sleep(0.5)  # Update every 0.5 seconds
+                        if not monitor_running:
+                            break
+                        step += 1
+                        # Only send if no real progress has been received recently
+                        try:
+                            progress_queue.put_nowait({
+                                'type': 'progress',
+                                'variation': 1,
+                                'total_variations': num_variations,
+                                'step': min(step, num_steps),
+                                'total_steps': num_steps,
+                                'progress': min((step / num_steps) * 90, 90)  # Cap at 90% for fallback
+                            })
+                        except:
+                            pass  # Queue might be full, that's okay
+                
+                fallback_task = asyncio.create_task(fallback_progress())
+                
+                # Wait for all images
+                for task, filename in tasks:
+                    try:
+                        output_path, seed_used, gen_time = await task
+                        image_urls.append({
+                            'url': f'/static/generated/{filename}',
+                            'filename': filename
+                        })
+                        generation_times.append(gen_time)
+                    except Exception as e:
+                        await manager.send_personal_message({
+                            'type': 'error',
+                            'message': f'Error generating image: {str(e)}'
+                        }, websocket)
+                        generation_times.append(None)
+                
+                # Cancel fallback
+                fallback_task.cancel()
+                try:
+                    await fallback_task
+                except asyncio.CancelledError:
+                    pass
+                
+                # Stop monitor and send completion
+                monitor_running = False
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
+                
+                await manager.send_personal_message({
+                    'type': 'complete',
+                    'progress': 100,
+                    'images': image_urls,
+                    'count': len(image_urls),
+                    'generation_times': generation_times,
+                    'total_time': sum(t for t in generation_times if t is not None)
+                }, websocket)
+                
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        await manager.send_personal_message({
+            'type': 'error',
+            'message': str(e)
+        }, websocket)
+        manager.disconnect(websocket)
+
+@app.get("/static/generated/{filename}")
+async def serve_image(filename: str):
+    """Serve generated images"""
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    if os.path.exists(filepath):
+        return FileResponse(filepath, media_type='image/png')
+    raise HTTPException(status_code=404, detail="Image not found")
+
+if __name__ == '__main__':
+    import uvicorn
+    import sys
+    
+    # Support reload parameter from command line
+    reload = '--reload' in sys.argv or 'reload' in sys.argv
+    port = 9090
+    host = "0.0.0.0"
+    
+    # Parse port from command line if provided
+    if '--port' in sys.argv:
+        try:
+            port_idx = sys.argv.index('--port')
+            port = int(sys.argv[port_idx + 1])
+        except (IndexError, ValueError):
+            pass
+    
+    # Parse host from command line if provided
+    if '--host' in sys.argv:
+        try:
+            host_idx = sys.argv.index('--host')
+            host = sys.argv[host_idx + 1]
+        except IndexError:
+            pass
+    
+    # When running with reload, we need to use string format for uvicorn to work properly
+    # However, when running python app.py directly, the module name is __main__, not app
+    # So we need to check if we're being run directly or imported
+    if reload:
+        # For reload to work, use string format
+        # This assumes you're running: uvicorn app:app --reload
+        # If running python app.py --reload, it won't work - use uvicorn command instead
+        import importlib.util
+        spec = importlib.util.find_spec("app")
+        if spec is not None and spec.origin and "app.py" in spec.origin:
+            # Module can be imported as "app"
+            uvicorn.run(
+                "app:app",  # Module:attribute format
+                host=host,
+                port=port,
+                reload=reload,
+                reload_dirs=[os.getcwd()] if reload else None
+            )
+        else:
+            # Can't import as "app", use app object directly (reload won't work)
+            print("⚠️  Warning: Reload mode requires running with: uvicorn app:app --reload")
+            print("   Running without reload...")
+            uvicorn.run(
+                app,
+                host=host,
+                port=port,
+                reload=False
+            )
+    else:
+        # Without reload, we can pass the app object directly
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            reload=False
+        )

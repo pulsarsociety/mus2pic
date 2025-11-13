@@ -1,0 +1,17 @@
+name: mus2pic
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - torch>=2.0.0
+    - diffusers>=0.21.0
+    - transformers>=4.30.0
+    - librosa>=0.10.0
+    - yt-dlp>=2023.7.6
+    - Pillow>=10.0.0
+    - numpy>=1.24.0
+    - accelerate>=0.20.0
+

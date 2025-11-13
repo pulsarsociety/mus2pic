@@ -1,0 +1,1969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mus2Pic - Music to Poster</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="alternate icon" href="/static/favicon.ico">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            margin-top: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .button-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .button-secondary:hover:not(:disabled) {
+            background: #e0e0e0;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .loading {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .progress-container {
+            background: #f0f0f0;
+            border-radius: 25px;
+            height: 50px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 15px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            background-size: 200% 100%;
+            border-radius: 25px;
+            position: relative;
+            overflow: hidden;
+            transition: width 0.3s ease;
+            animation: shimmer 2s infinite;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+        }
+
+        @keyframes shimmer {
+            0% {
+                background-position: 200% 0;
+            }
+            100% {
+                background-position: -200% 0;
+            }
+        }
+
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.3),
+                transparent
+            );
+            animation: shine 1.5s infinite;
+        }
+
+        @keyframes shine {
+            0% {
+                transform: translateX(-100%);
+            }
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+            z-index: 1;
+        }
+
+        .progress-status {
+            text-align: center;
+            color: #667eea;
+            font-weight: 500;
+            margin-top: 10px;
+            font-size: 15px;
+        }
+
+        .progress-dots {
+            display: inline-block;
+            width: 20px;
+            text-align: left;
+        }
+
+        .result-image {
+            width: 100%;
+            border-radius: 10px;
+            margin-top: 20px;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            display: none;
+        }
+
+        .result-image.show {
+            display: block;
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .success {
+            background: #efe;
+            color: #3c3;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .success.show {
+            display: block;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .feature-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .feature-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .feature-value {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        /* Comprehensive Results View */
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 2px solid #e0e0e0;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .result-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.1);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .result-title {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .result-subtitle {
+            color: #666;
+            font-size: 1em;
+            margin-top: 5px;
+        }
+
+        .result-timestamp {
+            color: #999;
+            font-size: 0.9em;
+        }
+
+        .result-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .result-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .result-left {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .result-right {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .result-section {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .result-section-title {
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .result-features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .result-feature-item {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .result-feature-label {
+            font-size: 0.8em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .result-feature-value {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .result-prompt-display {
+            font-size: 0.95em;
+            line-height: 1.6;
+            color: #333;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .result-image-wrapper {
+            text-align: center;
+        }
+
+        .result-image-wrapper img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .comparison-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .steps-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .steps-control input[type="number"] {
+            width: 80px;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+        }
+
+        /* YouTube Thumbnail Preview */
+        .thumbnail-preview {
+            margin-top: 15px;
+            border-radius: 10px;
+            overflow: hidden;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .thumbnail-preview.show {
+            display: block;
+        }
+
+        .thumbnail-preview img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Download Button */
+        .download-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 15px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        /* Multiple Variations Grid */
+        .images-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .image-item {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background: #f8f9fa;
+        }
+
+        .image-item img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .image-item .download-btn {
+            position: absolute;
+            bottom: 15px;
+            right: 15px;
+            margin: 0;
+            padding: 10px 20px;
+            font-size: 12px;
+        }
+
+        /* Prompt History */
+        .history-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .history-section.show {
+            display: block;
+        }
+
+        .history-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 2px solid transparent;
+        }
+
+        .history-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border-color: #667eea;
+        }
+
+        .history-item-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+
+        .history-item-prompt {
+            color: #666;
+            font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .history-header {
+            display: flex;
+            justify-items: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .clear-history {
+            background: #fee;
+            color: #c33;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .clear-history:hover {
+            background: #fdd;
+        }
+
+        /* Variations Control */
+        .variations-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .variations-control input[type="number"] {
+            width: 60px;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+        }
+        
+        .model-selector {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .model-selector label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .model-selector select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            margin-bottom: 12px;
+        }
+        
+        .model-info {
+            margin-top: 10px;
+        }
+        
+        .model-description {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            line-height: 1.5;
+        }
+        
+        .model-stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            font-size: 0.85em;
+        }
+        
+        .stat-item {
+            color: #555;
+        }
+        
+        .stat-item strong {
+            color: #333;
+        }
+
+        /* Cache Indicator */
+        .cache-indicator {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
+            font-size: 0.95em;
+            box-shadow: 0 2px 10px rgba(76, 175, 80, 0.3);
+        }
+
+        .cache-indicator-content {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .cache-indicator-content span:first-child {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        .cache-indicator.hidden {
+            display: none;
+        }
+
+        /* Genre Info Indicator */
+        .genre-info {
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95em;
+            box-shadow: 0 2px 10px rgba(33, 150, 243, 0.3);
+        }
+
+        .genre-info::before {
+            content: "🎵";
+            font-size: 1.2em;
+        }
+
+        .genre-info.hidden {
+            display: none;
+        }
+
+        .regenerate-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .regenerate-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+            transform: translateY(-1px);
+        }
+
+        .regenerate-btn:active {
+            transform: translateY(0);
+        }
+
+        /* Preview Selection Styles */
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .preview-item {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 3px solid transparent;
+            background: #f8f9fa;
+        }
+
+        .preview-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .preview-item.selected {
+            border-color: #667eea;
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .preview-item img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .preview-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .preview-item.selected .preview-label {
+            background: #667eea;
+        }
+
+        .generate-fullsize-btn {
+            margin-top: 20px;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: none;
+        }
+
+        .generate-fullsize-btn.show {
+            display: inline-block;
+        }
+
+        .generate-fullsize-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .generate-fullsize-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Mus2Pic</h1>
+        <p class="subtitle">Transform music into visual art</p>
+
+        <!-- Step 1: YouTube URL Input -->
+        <div class="section">
+            <div class="section-title">Step 1: Enter YouTube URL</div>
+            <div class="input-group">
+                <input type="text" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=..." oninput="showThumbnail(this.value)" />
+            </div>
+            <div class="input-group">
+                <label for="audioDuration">Audio Duration for Analysis:</label>
+                <select id="audioDuration" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-family: inherit; width: 100%;">
+                    <option value="30">30 seconds (Fast)</option>
+                    <option value="60" selected>60 seconds (Recommended)</option>
+                    <option value="0">Full Length (Complete Analysis)</option>
+                </select>
+                <small style="color: #666; font-size: 0.9em; display: block; margin-top: 5px;">
+                    💡 Longer durations provide more accurate analysis but take more time
+                </small>
+            </div>
+            <div class="input-group">
+                <label for="promptVersion">Prompt Generation Version:</label>
+                <select id="promptVersion" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-family: inherit; width: 100%;">
+                    <option value="v1">V1 (Classic - Original Algorithm)</option>
+                    <option value="v2" selected>V2 (Enhanced - Genre-Aware with Style Templates)</option>
+                </select>
+                <small style="color: #666; font-size: 0.9em; display: block; margin-top: 5px;">
+                    💡 V2 uses genre detection from metadata (or infers from audio features) for better style matching
+                </small>
+            </div>
+            <div class="thumbnail-preview" id="thumbnailPreview">
+                <img id="thumbnailImage" alt="Video thumbnail" />
+            </div>
+            <button class="button" id="generatePromptBtn" onclick="generatePrompt()">
+                Generate Prompt from Music
+            </button>
+            <div class="loading" id="promptLoading">
+                <div class="progress-container">
+                    <div class="progress-bar" id="promptProgressBar" style="width: 0%;">
+                        <div class="progress-text" id="promptProgressText">0%</div>
+                    </div>
+                </div>
+                <div class="progress-status" id="promptStatus">
+                    Ready to start
+                </div>
+            </div>
+            <div class="error" id="promptError"></div>
+        </div>
+
+        <!-- Step 2: Generated Prompt (Editable) -->
+        <div class="section" id="promptSection" style="display: none;">
+            <div class="section-title">Step 2: Edit Your Prompt</div>
+            <div id="genreInfo" class="genre-info" style="display: none;"></div>
+            <div class="input-group">
+                <label for="prompt">Prompt:</label>
+                <textarea id="prompt" placeholder="Your prompt will appear here..."></textarea>
+            </div>
+            <div class="input-group">
+                <label for="negativePrompt">Negative Prompt:</label>
+                <textarea id="negativePrompt" placeholder="Negative prompt will appear here..."></textarea>
+            </div>
+            <div class="features" id="features"></div>
+            <div class="steps-control">
+                <label for="numSteps">Inference Steps:</label>
+                <input type="number" id="numSteps" value="8" min="1" max="20" />
+                <span style="color: #666; font-size: 0.9em;">(4-8 recommended for LCM)</span>
+            </div>
+            <div class="variations-control">
+                <label for="numVariations">Variations:</label>
+                <input type="number" id="numVariations" value="1" min="1" max="4" />
+                <span style="color: #666; font-size: 0.9em;">(1-4 images)</span>
+            </div>
+            <div class="model-selector" id="modelSelector">
+                <label for="modelSelect">Model:</label>
+                <select id="modelSelect" onchange="updateModelInfo()">
+                    <!-- Options will be populated dynamically from API -->
+                    <option value="lcm">LCM (Latent Consistency Model)</option>
+                </select>
+                <div class="model-info" id="modelInfo">
+                    <div class="model-description">Fastest option - generates in 4-8 steps. Best balance of speed and quality.</div>
+                    <div class="model-stats">
+                        <span class="stat-item">⏱️ <strong>Time:</strong> 6-12 seconds</span>
+                        <span class="stat-item">💾 <strong>Memory:</strong> 4-5GB</span>
+                        <span class="stat-item">⭐ <strong>Quality:</strong> Good</span>
+                    </div>
+                </div>
+            </div>
+            <button class="button" id="generateImageBtn" onclick="generateImage()">
+                Generate Image
+            </button>
+            
+            <!-- Prompt History -->
+            <div class="history-section" id="historySection">
+                <div class="history-header">
+                    <div class="section-title" style="margin: 0;">Prompt History</div>
+                    <button class="clear-history" onclick="clearHistory()">Clear</button>
+                </div>
+                <div id="historyList"></div>
+            </div>
+            <div class="loading" id="imageLoading">
+                <div class="progress-container">
+                    <div class="progress-bar" id="imageProgressBar" style="width: 0%;">
+                        <div class="progress-text" id="imageProgressText">0%</div>
+                    </div>
+                </div>
+                <div class="progress-status" id="imageStatus">
+                    Ready to start
+                </div>
+            </div>
+            <div class="error" id="imageError"></div>
+        </div>
+
+        <!-- Step 3: Result -->
+        <div class="section" id="resultSection" style="display: none;">
+            <div class="section-title">Step 3: Your Generated Poster(s)</div>
+            <div id="imagesContainer"></div>
+            <div class="success" id="imageSuccess"></div>
+        </div>
+
+        <!-- Comprehensive Results View -->
+        <div class="section" id="comprehensiveResultsSection" style="display: none;">
+            <div class="section-title">📊 Complete Results & Comparison</div>
+            <div id="comprehensiveResultsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        // Model registry (will be loaded from API)
+        let modelRegistry = {};
+        
+        // Load models from API
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+                if (data.success) {
+                    modelRegistry = data.models;
+                    populateModelSelect(); // Populate dropdown with all available models
+                    updateModelInfo(); // Update UI with loaded models
+                }
+            } catch (error) {
+                console.error('Failed to load models:', error);
+            }
+        }
+        
+        // Populate model select dropdown dynamically
+        function populateModelSelect() {
+            const modelSelect = document.getElementById('modelSelect');
+            if (!modelSelect) return;
+            
+            // Clear existing options (except the first one if it's a placeholder)
+            modelSelect.innerHTML = '';
+            
+            // Add options from registry
+            for (const [key, model] of Object.entries(modelRegistry)) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = model.name;
+                modelSelect.appendChild(option);
+            }
+            
+            // Set default to 'lcm' if available
+            if (modelRegistry['lcm']) {
+                modelSelect.value = 'lcm';
+            }
+        }
+        
+        // Update model info display
+        function updateModelInfo() {
+            const modelSelect = document.getElementById('modelSelect');
+            const modelInfo = document.getElementById('modelInfo');
+            const selectedModel = modelSelect.value;
+            
+            if (modelRegistry[selectedModel]) {
+                const model = modelRegistry[selectedModel];
+                modelInfo.innerHTML = `
+                    <div class="model-description">${model.description}</div>
+                    <div class="model-stats">
+                        <span class="stat-item">⏱️ <strong>Time:</strong> ${model.expected_time}</span>
+                        <span class="stat-item">💾 <strong>Memory:</strong> ${model.memory}</span>
+                        <span class="stat-item">⭐ <strong>Quality:</strong> ${model.quality}</span>
+                    </div>
+                `;
+                
+                // Update default steps
+                const numStepsInput = document.getElementById('numSteps');
+                if (numStepsInput && model.default_steps) {
+                    numStepsInput.value = model.default_steps;
+                }
+            } else {
+                // Fallback if models not loaded
+                const fallbackInfo = {
+                    'lcm': { description: 'Fastest option - generates in 4-8 steps. Best balance of speed and quality.', expected_time: '6-12 seconds', memory: '4-5GB', quality: 'Good' },
+                    'sd14': { description: 'Smallest model - best for limited RAM (8GB). Good quality, slightly older.', expected_time: '15-25 seconds', memory: '3.5-4GB', quality: 'Good' },
+                    'sd21': { description: 'Better quality than 1.5 - improved prompt understanding. Requires more RAM.', expected_time: '20-30 seconds', memory: '4-5GB', quality: 'Very Good' },
+                    'turbo': { description: 'Very fast with high quality - can generate in 1-4 steps. Requires 8GB+ RAM.', expected_time: '8-15 seconds', memory: '6-8GB', quality: 'Excellent' },
+                    'lcm_sd21': { description: 'LCM based on SD2.1 - fast generation (4-8 steps) with better prompt understanding than SD1.5 LCM.', expected_time: '8-15 seconds', memory: '5-6GB', quality: 'Very Good' },
+                    'sdxl_lightning': { description: 'Ultra-fast SDXL model - generates in 1-4 steps with excellent quality. Requires 8GB+ RAM.', expected_time: '5-10 seconds', memory: '7-9GB', quality: 'Excellent' }
+                };
+                const model = fallbackInfo[selectedModel] || fallbackInfo['lcm'];
+                modelInfo.innerHTML = `
+                    <div class="model-description">${model.description}</div>
+                    <div class="model-stats">
+                        <span class="stat-item">⏱️ <strong>Time:</strong> ${model.expected_time}</span>
+                        <span class="stat-item">💾 <strong>Memory:</strong> ${model.memory}</span>
+                        <span class="stat-item">⭐ <strong>Quality:</strong> ${model.quality}</span>
+                    </div>
+                `;
+            }
+        }
+        
+        // Prompt History Management (localStorage)
+        const HISTORY_KEY = 'mus2pic_prompt_history';
+        const MAX_HISTORY = 10;
+        
+        // Load models on page load
+        loadModels();
+
+        function saveToHistory(prompt, negativePrompt, url) {
+            let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+            const historyItem = {
+                id: Date.now(),
+                prompt: prompt,
+                negativePrompt: negativePrompt,
+                url: url,
+                timestamp: new Date().toLocaleString()
+            };
+            history.unshift(historyItem);
+            history = history.slice(0, MAX_HISTORY);
+            localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+            renderHistory();
+        }
+
+        function loadHistory() {
+            return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+        }
+
+        function clearHistory() {
+            localStorage.removeItem(HISTORY_KEY);
+            renderHistory();
+        }
+
+        function renderHistory() {
+            const history = loadHistory();
+            const historyList = document.getElementById('historyList');
+            const historySection = document.getElementById('historySection');
+            
+            if (history.length === 0) {
+                historySection.classList.remove('show');
+                return;
+            }
+            
+            historySection.classList.add('show');
+            historyList.innerHTML = history.map(item => `
+                <div class="history-item" onclick="loadFromHistory(${item.id})">
+                    <div class="history-item-title">${item.url || 'Prompt'}</div>
+                    <div class="history-item-prompt">${item.prompt.substring(0, 80)}${item.prompt.length > 80 ? '...' : ''}</div>
+                </div>
+            `).join('');
+        }
+
+        function loadFromHistory(id) {
+            const history = loadHistory();
+            const item = history.find(h => h.id === id);
+            if (item) {
+                document.getElementById('prompt').value = item.prompt;
+                document.getElementById('negativePrompt').value = item.negativePrompt || '';
+                if (item.url) {
+                    document.getElementById('youtubeUrl').value = item.url;
+                    showThumbnail(item.url);
+                }
+            }
+        }
+
+        // YouTube Thumbnail Preview
+        function extractVideoId(url) {
+            const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/);
+            return match ? match[1] : null;
+        }
+
+        function showThumbnail(url) {
+            const videoId = extractVideoId(url);
+            const thumbnailPreview = document.getElementById('thumbnailPreview');
+            const thumbnailImage = document.getElementById('thumbnailImage');
+            
+            if (videoId) {
+                thumbnailImage.src = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+                thumbnailImage.onerror = function() {
+                    this.src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+                };
+                thumbnailPreview.classList.add('show');
+            } else {
+                thumbnailPreview.classList.remove('show');
+            }
+        }
+
+        // Download Image Function
+        function downloadImage(imageUrl, filename) {
+            // Ensure full URL if relative
+            const fullUrl = imageUrl.startsWith('http') ? imageUrl : window.location.origin + imageUrl;
+            const link = document.createElement('a');
+            link.href = fullUrl;
+            link.download = filename || 'poster.png';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Animate dots helper
+        function animateDots(element) {
+            let dots = 0;
+            return setInterval(() => {
+                dots = (dots + 1) % 4;
+                const dotsText = '.'.repeat(dots);
+                element.textContent = dotsText;
+            }, 500);
+        }
+
+        // Progress bar animation for prompt generation
+        function animatePromptProgress() {
+            const progressBar = document.getElementById('promptProgressBar');
+            const progressText = document.getElementById('promptProgressText');
+            const statusText = document.getElementById('promptStatus');
+            let progress = 0;
+            
+            // Create dots element
+            const dotsElement = document.createElement('span');
+            dotsElement.className = 'progress-dots';
+            const dotsInterval = animateDots(dotsElement);
+            
+            // Get duration for status message
+            const durationSelect = document.getElementById('audioDuration');
+            const duration = parseInt(durationSelect.value) || 0;
+            const durationText = duration > 0 ? `${duration}s` : 'full length';
+            
+            const stages = [
+                { percent: 20, text: '20%', status: 'Downloading audio' },
+                { percent: 40, text: '40%', status: `Extracting audio features (${durationText})` },
+                { percent: 60, text: '60%', status: 'Analyzing tempo and energy' },
+                { percent: 80, text: '80%', status: 'Generating prompt' },
+                { percent: 95, text: '95%', status: 'Finalizing' },
+            ];
+            
+            let currentStage = 0;
+            const interval = setInterval(() => {
+                if (currentStage < stages.length) {
+                    const stage = stages[currentStage];
+                    progress = stage.percent;
+                    progressBar.style.width = progress + '%';
+                    progressText.textContent = stage.text;
+                    statusText.innerHTML = stage.status;
+                    statusText.appendChild(dotsElement);
+                    currentStage++;
+                } else {
+                    // Hold at 95% until done
+                    if (progress < 95) {
+                        progress = 95;
+                        progressBar.style.width = progress + '%';
+                        progressText.textContent = '95%';
+                    }
+                }
+            }, 800);
+            
+            return { interval, dotsInterval };
+        }
+
+        async function generatePrompt() {
+            const url = document.getElementById('youtubeUrl').value.trim();
+            if (!url) {
+                showError('promptError', 'Please enter a YouTube URL');
+                return;
+            }
+
+            const btn = document.getElementById('generatePromptBtn');
+            const loading = document.getElementById('promptLoading');
+            const error = document.getElementById('promptError');
+            const progressBar = document.getElementById('promptProgressBar');
+            const progressText = document.getElementById('promptProgressText');
+            const statusText = document.getElementById('promptStatus');
+
+            btn.disabled = true;
+            loading.classList.add('active');
+            error.classList.remove('show');
+            
+            // Reset progress
+            progressBar.style.width = '0%';
+            progressText.textContent = '0%';
+            
+            // Start progress animation
+            const progressAnim = animatePromptProgress();
+
+            try {
+                // Get selected duration
+                const durationSelect = document.getElementById('audioDuration');
+                const duration = parseInt(durationSelect.value) || 0;
+                // 0 means full length, so send null or 0
+                const durationValue = duration > 0 ? duration : null;
+                
+                // Get selected prompt version
+                const promptVersionSelect = document.getElementById('promptVersion');
+                const promptVersion = promptVersionSelect.value || 'v2';
+                
+                const response = await fetch('/api/generate-prompt', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        url: url,
+                        duration: durationValue,
+                        prompt_version: promptVersion
+                    })
+                });
+
+                // Complete progress bar
+                clearInterval(progressAnim.interval);
+                clearInterval(progressAnim.dotsInterval);
+                progressBar.style.width = '100%';
+                progressText.textContent = '100%';
+                statusText.innerHTML = 'Complete!';
+
+                // Get response as text first, then parse as JSON
+                const responseText = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    // If JSON parsing fails, use the text as error message
+                    throw new Error(`Server error: ${responseText || response.statusText}`);
+                }
+
+                if (!response.ok) {
+                    // Handle Pydantic validation errors
+                    let errorMessage = 'Failed to generate prompt';
+                    if (data.detail) {
+                        if (Array.isArray(data.detail)) {
+                            // Pydantic validation errors are arrays
+                            errorMessage = data.detail.map(err => {
+                                const field = err.loc ? err.loc.join('.') : 'field';
+                                return `${field}: ${err.msg}`;
+                            }).join(', ');
+                        } else if (typeof data.detail === 'string') {
+                            errorMessage = data.detail;
+                        } else {
+                            errorMessage = JSON.stringify(data.detail);
+                        }
+                    } else if (data.error) {
+                        errorMessage = data.error;
+                    } else if (data.message) {
+                        errorMessage = data.message;
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                // Small delay to show 100%
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                // Show prompt section
+                document.getElementById('promptSection').style.display = 'block';
+                document.getElementById('prompt').value = data.prompt;
+                document.getElementById('negativePrompt').value = data.negative_prompt;
+                
+                // Show genre information if available
+                showGenreInfo(data.genre_hint, data.genre_source);
+                
+                // Save to history
+                saveToHistory(data.prompt, data.negative_prompt, url);
+
+                // Store band/song info for later use
+                window.currentBand = data.band || 'Unknown Artist';
+                window.currentSong = data.song || 'Unknown Song';
+                window.currentFeatures = data.features || {};
+                window.currentPrompt = data.prompt;
+                window.currentNegativePrompt = data.negative_prompt;
+
+                // Show features
+                if (data.features) {
+                    const featuresDiv = document.getElementById('features');
+                    featuresDiv.innerHTML = `
+                        <div class="feature-item">
+                            <div class="feature-label">Tempo</div>
+                            <div class="feature-value">${data.features.tempo} BPM</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">Brightness</div>
+                            <div class="feature-value">${data.features.brightness}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">Energy</div>
+                            <div class="feature-value">${data.features.energy}</div>
+                        </div>
+                    `;
+                }
+
+                // Scroll to prompt section
+                document.getElementById('promptSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            } catch (error) {
+                clearInterval(progressAnim.interval);
+                clearInterval(progressAnim.dotsInterval);
+                showError('promptError', error.message);
+            } finally {
+                btn.disabled = false;
+                loading.classList.remove('active');
+            }
+        }
+
+        // Progress bar animation for image generation
+        function animateImageProgress(numSteps, numVariations) {
+            const progressBar = document.getElementById('imageProgressBar');
+            const progressText = document.getElementById('imageProgressText');
+            const statusText = document.getElementById('imageStatus');
+            let progress = 0;
+            
+            // Create dots element
+            const dotsElement = document.createElement('span');
+            dotsElement.className = 'progress-dots';
+            const dotsInterval = animateDots(dotsElement);
+            
+            const totalSteps = numSteps;
+            const stepDuration = 2000; // 2 seconds per step estimate
+            const totalDuration = totalSteps * stepDuration * numVariations; // Multiply by variations
+            const updateInterval = 100; // Update every 100ms
+            
+            const startTime = Date.now();
+            
+            const interval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                progress = Math.min(95, (elapsed / totalDuration) * 100);
+                
+                progressBar.style.width = progress + '%';
+                progressText.textContent = Math.floor(progress) + '%';
+                
+                // Update status based on progress
+                statusText.innerHTML = '';
+                if (progress < 20) {
+                    statusText.textContent = 'Loading model';
+                } else if (progress < 40) {
+                    statusText.textContent = 'Processing prompt';
+                } else if (progress < 60) {
+                    statusText.textContent = 'Generating image';
+                } else if (progress < 80) {
+                    statusText.textContent = 'Refining details';
+                } else {
+                    statusText.textContent = 'Finalizing';
+                }
+                statusText.appendChild(dotsElement);
+            }, updateInterval);
+            
+            return { interval, dotsInterval };
+        }
+
+        async function generateImage() {
+            const prompt = document.getElementById('prompt').value.trim();
+            const negativePrompt = document.getElementById('negativePrompt').value.trim();
+            const numSteps = parseInt(document.getElementById('numSteps').value) || 8;
+            const numVariations = parseInt(document.getElementById('numVariations').value) || 1;
+            const model = document.getElementById('modelSelect').value || 'lcm';
+
+            if (!prompt) {
+                showError('imageError', 'Please enter a prompt');
+                return;
+            }
+
+            const btn = document.getElementById('generateImageBtn');
+            const loading = document.getElementById('imageLoading');
+            const error = document.getElementById('imageError');
+            const success = document.getElementById('imageSuccess');
+            const resultSection = document.getElementById('resultSection');
+            const progressBar = document.getElementById('imageProgressBar');
+            const progressText = document.getElementById('imageProgressText');
+            const statusText = document.getElementById('imageStatus');
+
+            btn.disabled = true;
+            loading.classList.add('active');
+            error.classList.remove('show');
+            success.classList.remove('show');
+            
+            // Reset progress
+            progressBar.style.width = '0%';
+            progressText.textContent = '0%';
+            statusText.textContent = 'Connecting...';
+
+            // Try WebSocket first, fallback to HTTP if it fails
+            let useWebSocket = true;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/progress`;
+            
+            // Set a timeout for WebSocket connection
+            const wsTimeout = setTimeout(() => {
+                if (useWebSocket) {
+                    console.warn('WebSocket connection timeout, falling back to HTTP');
+                    useWebSocket = false;
+                    generateImageHTTP();
+                }
+            }, 3000);
+            
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                clearTimeout(wsTimeout);
+                console.log('WebSocket connected');
+                statusText.textContent = 'Starting generation...';
+                // Send generation request
+                ws.send(JSON.stringify({
+                    type: 'generate',
+                    prompt: prompt,
+                    negative_prompt: negativePrompt,
+                    num_steps: numSteps,
+                    num_variations: numVariations,
+                    model: model
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('WebSocket message:', data);
+                    
+                    if (data.type === 'progress') {
+                        // Update progress bar with real progress
+                        const progress = Math.max(0, Math.min(data.progress || 0, 99));
+                        progressBar.style.width = progress + '%';
+                        progressText.textContent = Math.floor(progress) + '%';
+                        
+                        // Update status text
+                        if (data.total_variations > 1) {
+                            statusText.textContent = `Generating variation ${data.variation || 1}/${data.total_variations || 1} - Step ${data.step || 0}/${data.total_steps || numSteps}`;
+                        } else {
+                            statusText.textContent = `Generating - Step ${data.step || 0}/${data.total_steps || numSteps}`;
+                        }
+                    } else if (data.type === 'generation_time') {
+                        // Log generation time for debugging
+                        console.log(`Variation ${data.variation} generated in ${data.time?.toFixed(2)}s`);
+                    } else if (data.type === 'complete') {
+                        // Complete progress bar
+                        progressBar.style.width = '100%';
+                        progressText.textContent = '100%';
+                        statusText.textContent = 'Complete!';
+                        
+                        // Show results (support multiple variations)
+                        const imagesContainer = document.getElementById('imagesContainer');
+                        imagesContainer.innerHTML = '';
+                        
+                        if (data.images && Array.isArray(data.images) && data.images.length > 0) {
+                            if (data.images.length === 1) {
+                                // Single image - full width
+                                const imageDiv = document.createElement('div');
+                                imageDiv.innerHTML = `
+                                    <img src="${data.images[0].url}?t=${Date.now()}" class="result-image show" alt="Generated poster" />
+                                    <button class="download-btn" onclick="downloadImage('${data.images[0].url}', '${data.images[0].filename}')">
+                                        ⬇️ Download
+                                    </button>
+                                `;
+                                imagesContainer.appendChild(imageDiv);
+                                
+                                // Show comprehensive results view
+                                showComprehensiveResults(data.images[0], prompt, negativePrompt);
+                            } else {
+                                // Multiple images - grid layout
+                                const grid = document.createElement('div');
+                                grid.className = 'images-grid';
+                                data.images.forEach((img, index) => {
+                                    if (!img || !img.url) {
+                                        console.warn(`Invalid image data at index ${index}:`, img);
+                                        return;
+                                    }
+                                    
+                                    const imageItem = document.createElement('div');
+                                    imageItem.className = 'image-item';
+                                    imageItem.innerHTML = `
+                                        <img src="${img.url}?t=${Date.now()}" alt="Generated poster ${index + 1}" />
+                                        <button class="download-btn" onclick="downloadImage('${img.url}', '${img.filename}')">
+                                            ⬇️ Download
+                                        </button>
+                                    `;
+                                    grid.appendChild(imageItem);
+                                });
+                                imagesContainer.appendChild(grid);
+                            }
+                        } else {
+                            console.warn('No images in response:', data);
+                            showError('imageError', 'No images were generated');
+                        }
+                        
+                        resultSection.style.display = 'block';
+                        
+                        // Format generation time
+                        let timeText = '';
+                        if (data.total_time) {
+                            const totalSeconds = data.total_time;
+                            if (totalSeconds < 60) {
+                                timeText = ` in ${totalSeconds.toFixed(1)}s`;
+                            } else {
+                                const mins = Math.floor(totalSeconds / 60);
+                                const secs = (totalSeconds % 60).toFixed(1);
+                                timeText = ` in ${mins}m ${secs}s`;
+                            }
+                            
+                            // Show per-image times if multiple
+                            if (data.generation_times && data.generation_times.length > 1) {
+                                const avgTime = totalSeconds / data.generation_times.length;
+                                timeText += ` (avg ${avgTime.toFixed(1)}s per image)`;
+                            }
+                        }
+                        
+                        success.textContent = `Successfully generated ${data.count || 1} image(s)${timeText}!`;
+                        success.classList.add('show');
+
+                        // Scroll to result
+                        resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        
+                        // Close WebSocket
+                        ws.close();
+                        
+                        // Re-enable button
+                        btn.disabled = false;
+                        loading.classList.remove('active');
+                    } else if (data.type === 'error') {
+                        showError('imageError', data.message || data.error || 'An error occurred');
+                        ws.close();
+                        btn.disabled = false;
+                        loading.classList.remove('active');
+                    } else {
+                        console.warn('Unknown message type:', data.type, data);
+                    }
+                } catch (error) {
+                    console.error('Error processing WebSocket message:', error, event.data);
+                    showError('imageError', `Error processing server response: ${error.message}`);
+                    ws.close();
+                    btn.disabled = false;
+                    loading.classList.remove('active');
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                clearTimeout(wsTimeout);
+                if (useWebSocket) {
+                    useWebSocket = false;
+                    // Fallback to HTTP
+                    console.log('Falling back to HTTP endpoint');
+                    generateImageHTTP();
+                } else {
+                    showError('imageError', 'Connection error. Please try again.');
+                    btn.disabled = false;
+                    loading.classList.remove('active');
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket closed');
+            };
+            
+            // Fallback HTTP function
+            async function generateImageHTTP() {
+                // Use the old HTTP endpoint as fallback
+                try {
+                    // Start progress animation as fallback
+                    const progressAnim = animateImageProgress(numSteps, numVariations);
+                    
+                    const response = await fetch('/api/generate-image', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        negative_prompt: negativePrompt,
+                        num_steps: numSteps,
+                        num_variations: numVariations,
+                        model: model
+                    })
+                    });
+
+                    clearInterval(progressAnim.interval);
+                    clearInterval(progressAnim.dotsInterval);
+                    progressBar.style.width = '100%';
+                    progressText.textContent = '100%';
+                    statusText.innerHTML = 'Complete!';
+
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.detail || data.error || 'Failed to generate image');
+                    }
+
+                    // Show results (same as WebSocket version)
+                    const imagesContainer = document.getElementById('imagesContainer');
+                    imagesContainer.innerHTML = '';
+                    
+                    if (data.images && data.images.length > 0) {
+                        if (data.images.length === 1) {
+                            // Single image - full width
+                            const imageDiv = document.createElement('div');
+                            imageDiv.innerHTML = `
+                                <img src="${data.images[0].url}?t=${Date.now()}" class="result-image show" alt="Generated poster" />
+                                <button class="download-btn" onclick="downloadImage('${data.images[0].url}', '${data.images[0].filename}')">
+                                    ⬇️ Download
+                                </button>
+                            `;
+                            imagesContainer.appendChild(imageDiv);
+                            
+                            // Show comprehensive results view
+                            showComprehensiveResults(data.images[0], prompt, negativePrompt);
+                        } else {
+                            // Multiple images - grid layout
+                            const grid = document.createElement('div');
+                            grid.className = 'images-grid';
+                            data.images.forEach((img, index) => {
+                                if (!img || !img.url) {
+                                    console.warn(`Invalid image data at index ${index}:`, img);
+                                    return;
+                                }
+                                
+                                const imageItem = document.createElement('div');
+                                imageItem.className = 'image-item';
+                                imageItem.innerHTML = `
+                                    <img src="${img.url}?t=${Date.now()}" alt="Generated poster ${index + 1}" />
+                                    <button class="download-btn" onclick="downloadImage('${img.url}', '${img.filename}')">
+                                        ⬇️ Download
+                                    </button>
+                                `;
+                                grid.appendChild(imageItem);
+                            });
+                            imagesContainer.appendChild(grid);
+                        }
+                    }
+                    
+                    resultSection.style.display = 'block';
+                    
+                    // Format generation time
+                    let timeText = '';
+                    if (data.total_time) {
+                        const totalSeconds = data.total_time;
+                        if (totalSeconds < 60) {
+                            timeText = ` in ${totalSeconds.toFixed(1)}s`;
+                        } else {
+                            const mins = Math.floor(totalSeconds / 60);
+                            const secs = (totalSeconds % 60).toFixed(1);
+                            timeText = ` in ${mins}m ${secs}s`;
+                        }
+                        
+                        // Show per-image times if multiple
+                        if (data.generation_times && data.generation_times.length > 1) {
+                            const avgTime = totalSeconds / data.generation_times.length;
+                            timeText += ` (avg ${avgTime.toFixed(1)}s per image)`;
+                        }
+                    }
+                    
+                    success.textContent = `Successfully generated ${data.count || 1} image(s)${timeText}!`;
+                    success.classList.add('show');
+
+                    resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    
+                    btn.disabled = false;
+                    loading.classList.remove('active');
+                } catch (error) {
+                    showError('imageError', error.message);
+                    btn.disabled = false;
+                    loading.classList.remove('active');
+                }
+            }
+        }
+
+        function showError(elementId, message) {
+            const errorEl = document.getElementById(elementId);
+            errorEl.textContent = message;
+            errorEl.classList.add('show');
+        }
+
+        // Genre Info Display Function
+        function showGenreInfo(genreHint, genreSource) {
+            const indicator = document.getElementById('genreInfo');
+            
+            if (!genreSource || genreSource === 'none') {
+                indicator.style.display = 'none';
+                return;
+            }
+            
+            let message = '';
+            let icon = '🎵';
+            
+            if (genreSource === 'metadata') {
+                icon = '📀';
+                message = `Genre detected from audio metadata: <strong>${genreHint}</strong>`;
+            } else if (genreSource === 'spotify') {
+                icon = '🎵';
+                message = `Genre from Spotify API: <strong>${genreHint}</strong>`;
+            } else if (genreSource === 'inferred') {
+                icon = '🔍';
+                message = `Genre inferred from audio features: <strong>${genreHint}</strong>`;
+            } else if (genreSource === 'default') {
+                icon = '🎨';
+                message = `Using default genre style (no specific genre detected)`;
+            }
+            
+            if (message) {
+                indicator.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+                indicator.style.display = 'flex';
+            } else {
+                indicator.style.display = 'none';
+            }
+        }
+
+        // Regenerate Prompt Function (bypasses cache)
+        async function regeneratePrompt() {
+            const url = document.getElementById('youtubeUrl').value.trim();
+            if (!url) {
+                showError('promptError', 'Please enter a YouTube URL');
+                return;
+            }
+
+            const btn = document.getElementById('generatePromptBtn');
+            const loading = document.getElementById('promptLoading');
+            const error = document.getElementById('promptError');
+            const progressBar = document.getElementById('promptProgressBar');
+            const progressText = document.getElementById('promptProgressText');
+            const statusText = document.getElementById('promptStatus');
+
+            btn.disabled = true;
+            loading.classList.add('active');
+            error.classList.remove('show');
+            
+            // Hide cache indicator while regenerating
+            document.getElementById('cacheIndicator').style.display = 'none';
+            
+            // Reset progress
+            progressBar.style.width = '0%';
+            progressText.textContent = '0%';
+            
+            // Start progress animation
+            const progressAnim = animatePromptProgress();
+
+            try {
+                // Get selected duration
+                const durationSelect = document.getElementById('audioDuration');
+                const duration = parseInt(durationSelect.value) || 0;
+                const durationValue = duration > 0 ? duration : null;
+                
+                // Get selected prompt version
+                const promptVersionSelect = document.getElementById('promptVersion');
+                const promptVersion = promptVersionSelect.value || 'v2';
+                
+                const response = await fetch('/api/generate-prompt', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        url: url,
+                        duration: durationValue,
+                        prompt_version: promptVersion
+                    })
+                });
+
+                // Complete progress bar
+                clearInterval(progressAnim.interval);
+                clearInterval(progressAnim.dotsInterval);
+                progressBar.style.width = '100%';
+                progressText.textContent = '100%';
+                statusText.innerHTML = 'Complete!';
+
+                // Get response as text first, then parse as JSON
+                const responseText = await response.text();
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    throw new Error(`Server error: ${responseText || response.statusText}`);
+                }
+
+                if (!response.ok) {
+                    // Handle Pydantic validation errors
+                    let errorMessage = 'Failed to generate prompt';
+                    if (data.detail) {
+                        if (Array.isArray(data.detail)) {
+                            errorMessage = data.detail.map(err => {
+                                const field = err.loc ? err.loc.join('.') : 'field';
+                                return `${field}: ${err.msg}`;
+                            }).join(', ');
+                        } else if (typeof data.detail === 'string') {
+                            errorMessage = data.detail;
+                        } else {
+                            errorMessage = JSON.stringify(data.detail);
+                        }
+                    } else if (data.error) {
+                        errorMessage = data.error;
+                    } else if (data.message) {
+                        errorMessage = data.message;
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                // Small delay to show 100%
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                // Show prompt section
+                document.getElementById('promptSection').style.display = 'block';
+                document.getElementById('prompt').value = data.prompt;
+                document.getElementById('negativePrompt').value = data.negative_prompt;
+                
+                // Show genre information if available
+                showGenreInfo(data.genre_hint, data.genre_source);
+                
+                // Save to history
+                saveToHistory(data.prompt, data.negative_prompt, url);
+
+                // Store band/song info for later use
+                window.currentBand = data.band || 'Unknown Artist';
+                window.currentSong = data.song || 'Unknown Song';
+                window.currentFeatures = data.features || {};
+                window.currentPrompt = data.prompt;
+                window.currentNegativePrompt = data.negative_prompt;
+
+                // Show features
+                if (data.features) {
+                    const featuresDiv = document.getElementById('features');
+                    featuresDiv.innerHTML = `
+                        <div class="feature-item">
+                            <div class="feature-label">Tempo</div>
+                            <div class="feature-value">${data.features.tempo} BPM</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">Brightness</div>
+                            <div class="feature-value">${data.features.brightness}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">Energy</div>
+                            <div class="feature-value">${data.features.energy}</div>
+                        </div>
+                    `;
+                }
+
+                // Scroll to prompt section
+                document.getElementById('promptSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            } catch (error) {
+                clearInterval(progressAnim.interval);
+                clearInterval(progressAnim.dotsInterval);
+                showError('promptError', error.message);
+            } finally {
+                btn.disabled = false;
+                loading.classList.remove('active');
+            }
+        }
+
+        // Comprehensive Results Display Function
+        function showComprehensiveResults(imageData, prompt, negativePrompt) {
+            const container = document.getElementById('comprehensiveResultsContainer');
+            const section = document.getElementById('comprehensiveResultsSection');
+            
+            // Get stored data
+            const band = window.currentBand || 'Unknown Artist';
+            const song = window.currentSong || 'Unknown Song';
+            const features = window.currentFeatures || {};
+            
+            // Create result card
+            const resultCard = document.createElement('div');
+            resultCard.className = 'result-card';
+            
+            const timestamp = new Date().toLocaleString();
+            
+            resultCard.innerHTML = `
+                <div class="result-header">
+                    <div>
+                        <div class="result-title">${song}</div>
+                        <div class="result-subtitle">by ${band}</div>
+                    </div>
+                    <div class="result-timestamp">${timestamp}</div>
+                </div>
+                <div class="result-content">
+                    <div class="result-left">
+                        <div class="result-section">
+                            <div class="result-section-title">🎵 Audio Features</div>
+                            <div class="result-features-grid">
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">Tempo</div>
+                                    <div class="result-feature-value">${features.tempo || 'N/A'} BPM</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">Brightness</div>
+                                    <div class="result-feature-value">${features.brightness || 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">Energy</div>
+                                    <div class="result-feature-value">${features.energy || 'N/A'}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="result-section">
+                            <div class="result-section-title">✨ Generated Prompt</div>
+                            <div class="result-prompt-display">${prompt || 'No prompt available'}</div>
+                        </div>
+                        ${negativePrompt ? `
+                        <div class="result-section">
+                            <div class="result-section-title">🚫 Negative Prompt</div>
+                            <div class="result-prompt-display">${negativePrompt}</div>
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="result-right">
+                        <div class="result-section">
+                            <div class="result-section-title">🖼️ Generated Image</div>
+                            <div class="result-image-wrapper">
+                                <img src="${imageData.url}?t=${Date.now()}" alt="Generated poster" />
+                                <button class="download-btn" onclick="downloadImage('${imageData.url}', '${imageData.filename}')" style="margin-top: 15px;">
+                                    ⬇️ Download
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Add to container (prepend so newest is first)
+            container.insertBefore(resultCard, container.firstChild);
+            
+            // Show section
+            section.style.display = 'block';
+            
+            // Scroll to comprehensive results
+            section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            
+            // Save to comparison history (localStorage)
+            saveToComparisonHistory({
+                band: band,
+                song: song,
+                features: features,
+                prompt: prompt,
+                negativePrompt: negativePrompt,
+                imageUrl: imageData.url,
+                imageFilename: imageData.filename,
+                timestamp: timestamp
+            });
+        }
+
+        // Comparison History Management
+        const COMPARISON_KEY = 'mus2pic_comparison_history';
+        const MAX_COMPARISONS = 20;
+
+        function saveToComparisonHistory(result) {
+            let history = JSON.parse(localStorage.getItem(COMPARISON_KEY) || '[]');
+            history.unshift(result);
+            history = history.slice(0, MAX_COMPARISONS);
+            localStorage.setItem(COMPARISON_KEY, JSON.stringify(history));
+        }
+
+        function loadComparisonHistory() {
+            return JSON.parse(localStorage.getItem(COMPARISON_KEY) || '[]');
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('youtubeUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                generatePrompt();
+            }
+        });
+
+        // Load history on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            renderHistory();
+        });
+    </script>
+</body>
+</html>
+

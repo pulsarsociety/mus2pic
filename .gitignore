@@ -1,0 +1,98 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+
+# Generated images
+static/generated/*.png
+static/generated/*.jpg
+static/generated/*.jpeg
+
+# Cache files
+*.cache
+cache/
+*.json
+!requirements.txt
+!package.json
+!tsconfig.json
+!package-lock.json
+
+# Keep example and config files
+!.env.example
+!genre_cache.json.example
+!band_song_cache.json.example
+
+# Model caches (Hugging Face)
+# Note: Models are cached in ~/.cache/huggingface/ by default
+# These are large and shouldn't be committed
+
+# Audio files (temporary downloads)
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.flac
+
+# Logs
+*.log
+logs/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# OS files
+Thumbs.db
+.DS_Store
+
