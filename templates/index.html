@@ -800,8 +800,18 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎵 Mus2Pic</h1>
-        <p class="subtitle">Transform music into visual art</p>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div style="flex: 1;"></div>
+            <div style="text-align: center; flex: 2;">
+                <h1 style="margin-bottom: 10px;">🎵 Mus2Pic</h1>
+                <p class="subtitle" style="margin-bottom: 0;">Transform music into visual art</p>
+            </div>
+            <div style="flex: 1; text-align: right;">
+                <a href="/direct" class="nav-button" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 24px; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; transition: transform 0.2s, box-shadow 0.2s;" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 5px 20px rgba(102, 126, 234, 0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+                    🎨 Direct Prompt →
+                </a>
+            </div>
+        </div>
 
         <!-- Step 1: YouTube URL Input -->
         <div class="section">
@@ -824,10 +834,10 @@
                 <label for="promptVersion">Prompt Generation Version:</label>
                 <select id="promptVersion" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-family: inherit; width: 100%;">
                     <option value="v1">V1 (Classic - Original Algorithm)</option>
-                    <option value="v2" selected>V2 (Enhanced - Genre-Aware with Style Templates)</option>
+                    <option value="v3" selected>V3 (SDXL-Turbo Optimized - Enhanced Genre-Aware)</option>
                 </select>
                 <small style="color: #666; font-size: 0.9em; display: block; margin-top: 5px;">
-                    💡 V2 uses genre detection from metadata (or infers from audio features) for better style matching
+                    💡 V3 uses SDXL-Turbo optimized prompts with genre detection from metadata (or infers from audio features) for better style matching
                 </small>
             </div>
             <div class="thumbnail-preview" id="thumbnailPreview">
@@ -876,14 +886,14 @@
                 <label for="modelSelect">Model:</label>
                 <select id="modelSelect" onchange="updateModelInfo()">
                     <!-- Options will be populated dynamically from API -->
-                    <option value="lcm">LCM (Latent Consistency Model)</option>
+                    <option value="turbo">SDXL Turbo (Fast + High Quality)</option>
                 </select>
                 <div class="model-info" id="modelInfo">
-                    <div class="model-description">Fastest option - generates in 4-8 steps. Best balance of speed and quality.</div>
+                    <div class="model-description">Very fast with high quality - can generate in 1-4 steps. Requires 8GB+ RAM.</div>
                     <div class="model-stats">
-                        <span class="stat-item">⏱️ <strong>Time:</strong> 6-12 seconds</span>
-                        <span class="stat-item">💾 <strong>Memory:</strong> 4-5GB</span>
-                        <span class="stat-item">⭐ <strong>Quality:</strong> Good</span>
+                        <span class="stat-item">⏱️ <strong>Time:</strong> 8-15 seconds</span>
+                        <span class="stat-item">💾 <strong>Memory:</strong> 6-8GB</span>
+                        <span class="stat-item">⭐ <strong>Quality:</strong> Excellent</span>
                     </div>
                 </div>
             </div>
@@ -961,8 +971,10 @@
                 modelSelect.appendChild(option);
             }
             
-            // Set default to 'lcm' if available
-            if (modelRegistry['lcm']) {
+            // Set default to 'turbo' if available, fallback to 'lcm'
+            if (modelRegistry['turbo']) {
+                modelSelect.value = 'turbo';
+            } else if (modelRegistry['lcm']) {
                 modelSelect.value = 'lcm';
             }
         }
@@ -999,7 +1011,7 @@
                     'lcm_sd21': { description: 'LCM based on SD2.1 - fast generation (4-8 steps) with better prompt understanding than SD1.5 LCM.', expected_time: '8-15 seconds', memory: '5-6GB', quality: 'Very Good' },
                     'sdxl_lightning': { description: 'Ultra-fast SDXL model - generates in 1-4 steps with excellent quality. Requires 8GB+ RAM.', expected_time: '5-10 seconds', memory: '7-9GB', quality: 'Excellent' }
                 };
-                const model = fallbackInfo[selectedModel] || fallbackInfo['lcm'];
+                const model = fallbackInfo[selectedModel] || fallbackInfo['turbo'] || fallbackInfo['lcm'];
                 modelInfo.innerHTML = `
                     <div class="model-description">${model.description}</div>
                     <div class="model-stats">
@@ -1200,7 +1212,7 @@
                 
                 // Get selected prompt version
                 const promptVersionSelect = document.getElementById('promptVersion');
-                const promptVersion = promptVersionSelect.value || 'v2';
+                const promptVersion = promptVersionSelect.value || 'v3';
                 
                 const response = await fetch('/api/generate-prompt', {
                     method: 'POST',
@@ -1357,7 +1369,7 @@
             const negativePrompt = document.getElementById('negativePrompt').value.trim();
             const numSteps = parseInt(document.getElementById('numSteps').value) || 8;
             const numVariations = parseInt(document.getElementById('numVariations').value) || 1;
-            const model = document.getElementById('modelSelect').value || 'lcm';
+            const model = document.getElementById('modelSelect').value || 'turbo';
 
             if (!prompt) {
                 showError('imageError', 'Please enter a prompt');
@@ -1742,7 +1754,7 @@
                 
                 // Get selected prompt version
                 const promptVersionSelect = document.getElementById('promptVersion');
-                const promptVersion = promptVersionSelect.value || 'v2';
+                const promptVersion = promptVersionSelect.value || 'v3';
                 
                 const response = await fetch('/api/generate-prompt', {
                     method: 'POST',

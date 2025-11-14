@@ -9,7 +9,7 @@ A web application that generates AI-powered poster art from YouTube music videos
 ## ✨ Features
 
 - 🎵 **YouTube Audio Analysis** - Extract audio features (tempo, energy, brightness, valence) from any YouTube video
-- 🎨 **AI-Powered Prompt Generation** - Two versions (V1 & V2) that create prompts based on musical characteristics
+- 🎨 **AI-Powered Prompt Generation** - Two versions (V1 & V3) that create prompts based on musical characteristics
 - 🎭 **Genre Detection** - Automatic genre detection from:
   - Audio file metadata
   - Spotify API (with caching)
@@ -51,8 +51,14 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 3. **Install dependencies:**
 ```bash
+# Using uv (recommended - much faster):
+uv pip install -r requirements.txt
+
+# Or using pip:
 pip install -r requirements.txt
 ```
+
+**Note:** `uv` is 10-100x faster than pip. Install it with: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 4. **Set up environment variables (optional):**
 ```bash
@@ -79,7 +85,7 @@ Then open your browser to: **http://localhost:9090**
 1. **Enter YouTube URL** - Paste any YouTube video URL
 2. **Configure Options** (optional):
    - Audio Duration: 30s, 60s, or Full Length
-   - Prompt Version: V1 (classic) or V2 (genre-aware)
+   - Prompt Version: V1 (classic) or V3 (SDXL-Turbo optimized, genre-aware)
    - Model: Choose from 6 available models
    - Inference Steps: Adjust based on model (4-8 for LCM, 20 for SD)
 3. **Generate Prompt** - Click "Generate Prompt from Music"
@@ -152,6 +158,22 @@ mus2pic/
 | SD 2.1 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 4-5GB | Quality priority |
 
 ## 🔧 Troubleshooting
+
+### Import Errors
+
+**"Could not import module 'AutoImageProcessor'" error:**
+- This means `transformers` is missing or incompatible
+- Fix: Reinstall transformers and diffusers:
+  ```bash
+  uv pip install --upgrade --force-reinstall "transformers>=4.30.0,<5.0.0" "diffusers>=0.21.0"
+  # Or with pip:
+  pip install --upgrade --force-reinstall "transformers>=4.30.0,<5.0.0" "diffusers>=0.21.0"
+  ```
+
+**General import errors:**
+- Make sure virtual environment is activated
+- Run: `uv pip install -r requirements.txt` (or `pip install -r requirements.txt`)
+- If issues persist: `uv pip install --upgrade -r requirements.txt`
 
 ### Black Images
 - Ensure guidance scale is set correctly (1.0 for LCM)

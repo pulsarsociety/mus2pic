@@ -14,8 +14,14 @@ A beautiful, minimalistic web interface for generating music-inspired posters fr
 
 1. Install dependencies:
 ```bash
+# Using uv (recommended - much faster):
+uv pip install -r requirements.txt
+
+# Or using pip:
 pip install -r requirements.txt
 ```
+
+**Note:** `uv` is 10-100x faster than pip. Install it with: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 2. Make sure you have all the required packages (torch, diffusers, librosa, etc.)
 

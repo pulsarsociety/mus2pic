@@ -1,6 +1,11 @@
 """
 FastAPI web application for mus2pic - Lightweight and fast!
 """
+import os
+# Set HF_HOME before loading any other modules that might use it
+os.environ["HF_HOME"] = "/data/.hf_home"
+os.makedirs("/data/.hf_home", exist_ok=True)
+
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file
 
@@ -9,7 +14,6 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
-import os
 import time
 import asyncio
 import random
@@ -18,10 +22,40 @@ from contextlib import redirect_stdout
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from test import download_audio, analyze_audio, audio_to_prompt, audio_to_prompt_v2, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
+from test import download_audio, analyze_audio, audio_to_prompt, audio_to_prompt_v3, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
 from model_options import generate_with_lcm, generate_with_sd14, generate_with_sd21, generate_with_turbo, generate_with_lcm_sd21, generate_with_sdxl_lightning, MODEL_REGISTRY
 
 app = FastAPI(title="Mus2Pic", description="Transform music into visual art")
+
+# Global pipeline cache - pre-load default model at startup
+# This ensures the model is ready immediately and stays in VRAM
+_global_pipelines = {}
+
+@app.on_event("startup")
+async def startup_event():
+    """Pre-load Turbo model at startup for faster first request"""
+    # Lazy import to avoid import-time errors
+    try:
+        from model_options import get_turbo_pipeline
+        import torch
+        
+        device, dtype = ("cuda", torch.float16) if torch.cuda.is_available() else ("cpu", torch.float32)
+        
+        print("\n" + "="*60)
+        print("🚀 STARTUP: Pre-loading Turbo model (SDXL Turbo)")
+        print("="*60)
+        print(f"Device: {device}, Dtype: {dtype}")
+        
+        # Pre-load the Turbo model (fast + high quality)
+        # This loads it into VRAM immediately, so first request is instant
+        pipeline = get_turbo_pipeline()
+        _global_pipelines["turbo"] = pipeline
+        print("✓ Turbo model (SDXL Turbo) loaded and ready in VRAM")
+        print("="*60 + "\n")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not pre-load Turbo model: {e}")
+        print("   Model will be loaded on first request instead")
+        print("="*60 + "\n")
 
 # Configuration
 UPLOAD_FOLDER = 'static/generated'
@@ -66,7 +100,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 class PromptRequest(BaseModel):
     url: str
     duration: Optional[int] = None  # Duration in seconds. None or 0 means full length
-    prompt_version: str = "v2"  # "v1" or "v2" - which prompt generation function to use
+    prompt_version: str = "v3"  # "v1" or "v3" - which prompt generation function to use
 
 class ImageRequest(BaseModel):
     prompt: str
@@ -79,6 +113,12 @@ class ImageRequest(BaseModel):
 async def index():
     """Serve the main page"""
     with open("templates/index.html", "r") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/direct", response_class=HTMLResponse)
+async def direct():
+    """Serve the direct prompt page"""
+    with open("templates/direct.html", "r") as f:
         return HTMLResponse(content=f.read())
 
 @app.get("/favicon.ico")
@@ -118,11 +158,11 @@ async def generate_prompt(request: PromptRequest):
             # Step 2: Analyze audio with specified duration
             features = analyze_audio(audio_path, duration=duration)
             
-            # Step 3: Generate prompt (v1 or v2)
+            # Step 3: Generate prompt (v1 or v3)
             genre_hint = None
             genre_source = None
             
-            if request.prompt_version == "v2":
+            if request.prompt_version == "v3":
                 # Try to get genre from multiple sources (in order of preference)
                 raw_genres = None
                 genre_source = None
@@ -148,16 +188,16 @@ async def generate_prompt(request: PromptRequest):
                         else:
                             # 4. Final fallback: use default
                             genre_source = "default"
-                            raw_genres = None  # Will normalize to "abstract" in audio_to_prompt_v2
+                            raw_genres = None  # Will normalize to "abstract" in audio_to_prompt_v3
                 
-                # audio_to_prompt_v2 will normalize raw_genres and generate prompt
-                prompt, negative_prompt = audio_to_prompt_v2(
+                # audio_to_prompt_v3 will normalize raw_genres and generate prompt
+                prompt, negative_prompt = audio_to_prompt_v3(
                     features, 
                     band_name=band_name, 
                     song_title=song_title,
                     raw_genres=raw_genres  # Can be list or None
                 )
-                # Get normalized genre for response (audio_to_prompt_v2 normalizes it internally)
+                # Get normalized genre for response (audio_to_prompt_v3 normalizes it internally)
                 refined_genre = normalize_genre(raw_genres) if raw_genres else "abstract"
             else:
                 # Use v1 (default) - no genre needed
@@ -180,12 +220,12 @@ async def generate_prompt(request: PromptRequest):
             'band': band_name,
             'song': song_title,
             'from_cache': False,  # Prompt caching removed
-            'genre_hint': refined_genre if request.prompt_version == "v2" else None,  # Refined genre (if v2)
+            'genre_hint': refined_genre if request.prompt_version == "v3" else None,  # Refined genre (if v3)
             'genre_source': genre_source,  # Where genre came from: "metadata", "spotify", "inferred", "default", or "none"
             'features': {
-                'tempo': float(round(features.get('tempo', 0), 2)),
-                'brightness': float(round(features.get('brightness', 0), 2)),
-                'energy': float(round(features.get('energy', 0), 4))
+                'tempo': round(float(features.get('tempo', 0)), 2),
+                'brightness': round(float(features.get('brightness', 0)), 2),
+                'energy': round(float(features.get('energy', 0)), 4)
             }
         }
         

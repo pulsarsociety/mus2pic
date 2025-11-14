@@ -233,19 +233,11 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
             return cached
         return None
     
-    # --- Spotify credentials (from environment variables) ---
+    # --- Spotify credentials (env vars with fallback to your credentials) ---
     # Get credentials from: https://developer.spotify.com/dashboard
-    # Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env file
-    client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    
-    # Fallback to demo credentials (rate-limited, for testing only)
-    # For production, always use your own credentials via .env
-    if not client_id or not client_secret:
-        print("⚠️  Spotify credentials not found. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env file", file=sys.stderr)
-        print("   Using demo credentials (rate-limited). Get your own at: https://developer.spotify.com/dashboard", file=sys.stderr)
-        client_id = "5637c929e8794d9ea917d12963507696"  # Demo credentials
-        client_secret = "a162aa98a7f4481c83e57c835e2057fa"  # Demo credentials
+    # Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env file (optional)
+    client_id = os.getenv("SPOTIFY_CLIENT_ID", "5637c929e8794d9ea917d12963507696")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "a162aa98a7f4481c83e57c835e2057fa")
     
     if not client_id or not client_secret:
         cache[key] = "abstract"
@@ -316,7 +308,7 @@ def infer_genre_from_features(features):
     elif tempo < 90 and energy < 0.4:
         return "ambient"
     else:
-        return None  # Return None to use default genre in v2
+        return None  # Return None to use default genre in v3
 
 # 1. Extract audio from YouTube and get metadata
 def download_audio(youtube_url):
@@ -772,132 +764,156 @@ def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=
     return prompt.strip(), negative_prompt.strip()
 
 
-def audio_to_prompt_v2(features, band_name=None, song_title=None, raw_genres=None):
+def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=None):
     """
-    Generate adaptive, text-safe, high-quality prompts for music-based art generation.
-    Keeps visual coherence across same band/song, while varying stylistically by features.
+    Enhanced SDXL-Turbo-optimized visual identity prompt generator.
+    Mystic, symbolic, poster-ready art representing the musical essence.
+    All genres preserved. Outputs stable, aesthetic, abstract compositions.
     """
-    # --- Normalize genre ---
+    # -------------------------------
+    # 1. Normalize genre
+    # -------------------------------
     genre_hint = normalize_genre(raw_genres) if raw_genres else "abstract"
-    
-    # === Extract core features ===
-    tempo = features.get('tempo', 120)
-    energy = features.get('energy', 0.5)
-    brightness = features.get('spectral_centroid', 3000)
-    valence = features.get('valence', 0.5)
+    genre_key = genre_hint.lower()
 
-    # === 1. Mood inference ===
+    # -------------------------------
+    # 2. Extract features
+    # -------------------------------
+    tempo = features.get("tempo", 120)
+    energy = features.get("energy", 0.5)
+    brightness = features.get("spectral_centroid", 3000)
+    valence = features.get("valence", 0.5)
+
+    # -------------------------------
+    # 3. Mood inference (cleaned & aesthetic)
+    # -------------------------------
     if valence > 0.7:
-        mood = "uplifting euphoric"
+        mood = "euphoric uplift"
     elif valence > 0.4:
-        mood = "nostalgic reflective"
+        mood = "reflective nostalgia"
     else:
-        mood = "melancholic introspective"
+        mood = "melancholic depth"
 
-    # === 2. Tone & palette ===
+    # -------------------------------
+    # 4. Lighting / tone (Turbo-friendly)
+    # -------------------------------
     if energy > 0.7:
-        tone = "vivid high-contrast lighting"
+        tone = "bold high-contrast lighting"
     elif energy > 0.4:
-        tone = "warm cinematic tones"
+        tone = "cinematic soft-contrast lighting"
     else:
-        tone = "muted soft monochrome palette"
+        tone = "muted diffused lighting"
 
-    # === 3. Motion & rhythm ===
-    if tempo > 140:
-        motion = "explosive kinetic energy"
-    elif tempo > 100:
-        motion = "dynamic rhythmic motion"
+    # -------------------------------
+    # 5. Motion / rhythm interpretation
+    # -------------------------------
+    if tempo > 150:
+        motion = "intense kinetic flow"
+    elif tempo > 110:
+        motion = "dynamic rhythmic movement"
     else:
-        motion = "slow atmospheric stillness"
+        motion = "slow atmospheric motion"
 
-    # === 4. Substyle ===
+    # -------------------------------
+    # 6. Style accent from brightness & energy
+    # -------------------------------
     if energy > 0.6 and brightness > 3000:
-        substyle = "radiant power and presence"
+        substyle = "radiant force and presence"
     elif tempo < 100 and brightness < 2000:
-        substyle = "hazy melancholy and isolation"
-    elif brightness > 2500 and energy < 0.2:
-        substyle = "bright restraint and space"
+        substyle = "foggy isolation"
+    elif brightness > 2500 and energy < 0.3:
+        substyle = "bright minimal clarity"
     else:
-        substyle = "balanced cinematic tone"
+        substyle = "balanced atmosphere"
 
-    # === 5. Controlled per-song flavor ===
+    # -------------------------------
+    # 7. Keep ALL genres but tighten phrasing
+    # -------------------------------
     genre_flavors = {
-    "symphonic metal": [
-        "ethereal grandeur", "celestial storm", "orchestral chaos", "cathedral symmetry"
-    ],
-    "progressive metal": [
-        "cosmic architecture", "fractal rhythm", "mechanical transcendence", "astral geometry"
-    ],
-    "gothic metal": [
-        "dark elegance", "romantic decay", "cathedral ruins", "melancholic grace"
-    ],
-    "folk metal": [
-        "ancient ritual", "mythic forest energy", "runic mist", "earthbound magic"
-    ],
-    "power metal": [
-        "heroic blaze", "chromatic storm", "glorious ascension", "shattered sky"
-    ],
-    "metalcore": [
-        "post-apocalyptic structure", "urban decay", "existential energy", "industrial collapse"
-    ],
-    "post-rock": [
-        "emotional horizon", "endless landscape", "minimalist motion", "distant calm"
-    ],
-    "ambient": [
-        "ethereal texture", "infinite stillness", "misty depth", "dreamlike flow"
-    ],
-    "psychedelic rock": [
-        "kaleidoscopic haze", "dreamlike vortex", "cosmic abstraction", "liquid distortion"
-    ],
-    "progressive rock": [
-        "conceptual symmetry", "retro-futuristic geometry", "timeless abstraction", "structural dreamscape"
-    ],
-    "alternative rock": [
-        "gritty realism", "emotive distortion", "cinematic melancholy", "urban static"
-    ],
-    "classic rock": [
-        "analog warmth", "dusty stage lights", "electric nostalgia", "timeless energy"
-    ],
-    "grunge": [
-        "rain-soaked decay", "distorted emotion", "raw underground haze", "urban desolation"
-    ],
-    "pop": [
-        "neon glow", "vibrant minimalism", "modern color harmony", "dreamlike sparkle"
-    ],
-    "electronic": [
-        "digital shimmer", "cybernetic rhythm", "neon pulse", "futuristic circuitry"
-    ],
-    "abstract": [
-        "floating textures", "color haze", "shape harmony", "emotional blur"
-    ],
+        "symphonic metal": [
+            "ethereal grandeur", "celestial storm", "orchestral monument", "cathedral symmetry"
+        ],
+        "progressive metal": [
+            "cosmic architecture", "fractal rhythm", "astral geometry", "dimensional complexity"
+        ],
+        "gothic metal": [
+            "dark romantic elegance", "ruined cathedral aura", "somber ritualism", "velvet decay"
+        ],
+        "folk metal": [
+            "ancient myth energy", "ritual forest essence", "runic mist", "earthbound mysticism"
+        ],
+        "power metal": [
+            "heroic blaze", "chromatic ascension", "mythic skyburst", "epic radiant storm"
+        ],
+        "metalcore": [
+            "post-apocalyptic tension", "industrial fracture", "urban collapse energy", "existential aggression"
+        ],
+        "post-rock": [
+            "endless horizon", "minimalist atmosphere", "emotional distance", "long-exposure calm"
+        ],
+        "ambient": [
+            "infinite stillness", "foglike depth", "etheric flow", "hushed dream texture"
+        ],
+        "psychedelic rock": [
+            "kaleidoscopic distortion", "dream vortex", "liquid abstraction", "color hallucination"
+        ],
+        "progressive rock": [
+            "conceptual geometry", "retro-futurist symmetry", "abstract narrative forms", "architectural rhythm"
+        ],
+        "alternative rock": [
+            "cinematic grit", "urban melancholy", "distorted emotion", "static-filled atmosphere"
+        ],
+        "classic rock": [
+            "vintage glow", "analog warmth", "timeless stage light", "retro sonic haze"
+        ],
+        "grunge": [
+            "rain-washed decay", "underground rawness", "fractured mood", "emotional distortion"
+        ],
+        "pop": [
+            "neon minimalism", "crisp modern glow", "saturated harmony", "clean vibrant shapes"
+        ],
+        "electronic": [
+            "cybernetic rhythm", "neon circuitry", "digital shimmer", "futuristic pulse"
+        ],
+        "abstract": [
+            "floating shapes", "color haze", "dreamlike blur", "intuitive motion"
+        ],
     }
 
-    # Create deterministic random seed
+    # Deterministic flavor by band/song/genre
     identifier = f"{band_name or ''}-{song_title or ''}-{genre_hint}"
     seed = int(hashlib.sha256(identifier.encode()).hexdigest(), 16)
     local_random = random.Random(seed)
-    flavor = local_random.choice(genre_flavors.get(genre_hint.lower(), genre_flavors["abstract"]))
+    flavor = local_random.choice(genre_flavors.get(genre_key, genre_flavors["abstract"]))
 
-    # === 6. Scene composition awareness ===
+    # -------------------------------
+    # 8. Composition system (cleaner + more aesthetic)
+    # -------------------------------
     if energy < 0.3:
-        composition = "minimalist layout, open space, single subject silhouette"
+        composition = "minimal central silhouette, wide negative space"
     elif energy < 0.6:
-        composition = "balanced composition, layered depth, cinematic framing"
+        composition = "layered symmetric depth, cinematic framing"
     else:
-        composition = "chaotic motion, dynamic lighting, dramatic perspective"
+        composition = "chaotic dynamic composition, dramatic angles"
 
-    # === 7. Final prompt ===
+    # -------------------------------
+    # 9. FINAL SDXL-TURBO OPTIMIZED PROMPT
+    # -------------------------------
     prompt = (
-        f"music-inspired {genre_hint} art poster, {mood}, {tone}, {motion}, "
-        f"{substyle}, {flavor}, {composition}, "
-        "texture-rich, volumetric lighting, fog layers, highly detailed, "
-        "no text, no title, no logo, no watermark, no typography, professional composition, 8k render"
+        f"symbolic surreal artwork representing the musical identity of {band_name or 'the artist'}, "
+        f"inspired by the track {song_title or 'this song'}. "
+        f"{genre_hint} aesthetic, {mood}, {tone}, {motion}, {substyle}, {flavor}, "
+        f"{composition}. "
+        "mystic, atmospheric, poster-grade design, volumetric depth, fog layers, "
+        "high detail, abstract forms, no text, no logos, professional visual harmony."
     )
 
-    # === 8. Negative prompt ===
+    # -------------------------------
+    # 10. Negative prompt (TURBO-safe)
+    # -------------------------------
     negative_prompt = (
-        "text, logo, watermark, title, signature, words, "
-        "lowres, blurry, deformed, disfigured, messy composition, artifacts, noisy, oversaturated"
+        "text, letters, watermark, logo, signature, messy collage, realism, human faces, "
+        "photographic people, clutter, artifacts, oversharpened, low quality"
     )
 
     return prompt, negative_prompt

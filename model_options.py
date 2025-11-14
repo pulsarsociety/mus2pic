@@ -4,18 +4,66 @@ Choose based on your priority: speed, quality, or memory usage
 """
 
 import torch
-from diffusers import DiffusionPipeline, LCMScheduler, StableDiffusionXLPipeline, UNet2DConditionModel, EulerDiscreteScheduler
 from PIL import Image
 import threading
 import os
 import shutil
 from pathlib import Path
+
+# Try importing diffusers with better error handling
+# Note: This can raise RuntimeError if transformers is missing/incompatible
+try:
+    from diffusers import DiffusionPipeline, LCMScheduler, StableDiffusionXLPipeline, UNet2DConditionModel, EulerDiscreteScheduler
+    DIFFUSERS_AVAILABLE = True
+except (ImportError, RuntimeError) as e:
+    DIFFUSERS_AVAILABLE = False
+    error_msg = str(e)
+    print("\n" + "="*70)
+    print("❌ CRITICAL ERROR: Failed to import diffusers")
+    print("="*70)
+    print(f"Error: {error_msg}")
+    print("")
+    print("This usually means 'transformers' is missing or incompatible.")
+    print("")
+    print("🔧 TO FIX THIS, RUN:")
+    print("   ./fix_dependencies.sh")
+    print("")
+    print("Or manually:")
+    print('   uv pip install --upgrade --force-reinstall "transformers>=4.30.0,<5.0.0" "diffusers>=0.21.0"')
+    print("   # Or with pip:")
+    print('   pip install --upgrade --force-reinstall "transformers>=4.30.0,<5.0.0" "diffusers>=0.21.0"')
+    print("="*70 + "\n")
+    # Re-raise to make the error obvious
+    raise RuntimeError(
+        "diffusers import failed. Run './fix_dependencies.sh' to fix this. "
+        f"Original error: {error_msg}"
+    ) from e
 try:
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
     SAFETENSORS_AVAILABLE = True
 except ImportError:
     SAFETENSORS_AVAILABLE = False
+
+# Check for xformers (memory efficient attention for CUDA - faster generation)
+try:
+    import xformers
+    XFORMERS_AVAILABLE = True
+except ImportError:
+    XFORMERS_AVAILABLE = False
+
+# Configure Hugging Face cache directory to /data/.hf_home/hub/
+# This must be set before any diffusers imports are used
+def _configure_hf_cache():
+    """Configure HF_HOME environment variable - force to /data/.hf_home"""
+    # Force set to /data/.hf_home (override any existing value, especially /workspace)
+    base_dir = "/data/.hf_home"
+    os.makedirs(base_dir, exist_ok=True)
+    os.environ["HF_HOME"] = base_dir
+    print(f"📦 Configured Hugging Face cache to: {base_dir} (overriding any previous setting)")
+
+# Configure cache directory on module import
+_configure_hf_cache()
 
 # Global model cache with thread safety (separate caches for each model)
 _pipe_cache = {}  # Dictionary to store different model pipelines
@@ -24,18 +72,20 @@ _cache_load_count = {}  # Track how many times each model was loaded
 _cache_access_order = []  # Track access order for LRU eviction
 
 # Configuration
-MAX_CACHED_MODELS = 4  # Maximum number of models to keep in memory (M1 VRAM is tight)
-ENABLE_CPU_OFFLOAD = False  # Set to True for SDXL on 8GB models (adds latency on MPS)
-ENABLE_ATTENTION_SLICING = True  # Reduces memory but adds small slowdown (~10-20%)
+# Optimized for RTX 3060 12GB VRAM (can cache more models than M1 Mac)
+MAX_CACHED_MODELS = 6 if torch.cuda.is_available() else 4  # More models in VRAM with 12GB GPU
+ENABLE_CPU_OFFLOAD = False  # Keep False for GPU (CPU offload adds latency)
+# Attention slicing: disable for GPU (12GB VRAM doesn't need it, adds 10-20% slowdown)
+ENABLE_ATTENTION_SLICING = False if torch.cuda.is_available() else True
 
 
 def get_device_dtype():
     """
-    Get device and dtype for M-series Mac optimization.
+    Get device and dtype - optimized for GPU (CUDA) when available.
     Returns (device, dtype) tuple.
     """
     if torch.cuda.is_available():
-        return "cuda", torch.float16
+        return "cuda", torch.float16  # float16 for faster inference on GPU
     if torch.backends.mps.is_available():
         return "mps", torch.float16  # float16 is much faster on MPS (2-3x speedup)
     return "cpu", torch.float32
@@ -132,6 +182,13 @@ MODEL_REGISTRY = {
     }
 }
 
+def _is_model_cached_locally(model_id):
+    """Check if model is already cached locally"""
+    cache_dir = get_huggingface_cache_dir()
+    cache_path = model_id.replace("/", "--")
+    full_path = os.path.join(cache_dir, f"models--{cache_path}")
+    return os.path.exists(full_path)
+
 def get_lcm_pipeline(model_name="lcm", model_id="SimianLuo/LCM_Dreamshaper_v7"):
     """
     Get or create cached LCM pipeline (thread-safe).
@@ -173,14 +230,37 @@ def get_lcm_pipeline(model_name="lcm", model_id="SimianLuo/LCM_Dreamshaper_v7"):
         
         device, dtype = get_device_dtype()
         
+        # Check if model is cached locally
+        cache_dir = get_huggingface_cache_dir()
+        is_cached = _is_model_cached_locally(model_id)
+        if is_cached:
+            print(f"✓ Model found in cache, loading from: {cache_dir}")
+        
         print(f"Loading {model_name} model on {device}...")
         try:
-            pipe = DiffusionPipeline.from_pretrained(
-                model_id,
-                torch_dtype=dtype,
-                safety_checker=None,
-                requires_safety_checker=False
-            )
+            # Try loading from cache first, fallback to download if needed
+            try:
+                pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False,
+                    cache_dir=cache_dir,
+                    local_files_only=is_cached  # Use cache if available
+                )
+            except Exception as e:
+                if is_cached and ("not found" in str(e).lower() or "file" in str(e).lower()):
+                    # Cache might be incomplete, try downloading
+                    print(f"⚠️  Cache incomplete, downloading missing files...")
+                    pipe = DiffusionPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=dtype,
+                        safety_checker=None,
+                        requires_safety_checker=False,
+                        cache_dir=cache_dir
+                    )
+                else:
+                    raise
             pipe = pipe.to(device)
             
             # Enable attention slicing for memory efficiency (optional, adds small slowdown)
@@ -194,6 +274,14 @@ def get_lcm_pipeline(model_name="lcm", model_id="SimianLuo/LCM_Dreamshaper_v7"):
             
             # Use LCM scheduler for fast generation
             pipe.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
+            
+            # Enable xformers for CUDA (faster attention computation)
+            if device == "cuda" and XFORMERS_AVAILABLE:
+                try:
+                    pipe.enable_xformers_memory_efficient_attention()
+                    print("  ✓ XFormers enabled (faster attention)")
+                except Exception:
+                    pass  # xformers might not be compatible with this model
             
             # MPS workaround: Ensure VAE is properly configured for MPS
             if device == "mps" and hasattr(pipe, 'vae'):
@@ -298,19 +386,40 @@ def get_sdxl_lightning_pipeline(num_inference_steps=4):
         print(f"  Lightning checkpoint: {checkpoint_name} (for {step_key} steps)")
         
         # Load base SDXL model
+        cache_dir = get_huggingface_cache_dir()
+        is_cached = _is_model_cached_locally(base_model)
+        if is_cached:
+            print(f"  ✓ Base model found in cache")
+        
         print("  Loading base SDXL model...")
-        pipe = StableDiffusionXLPipeline.from_pretrained(
-            base_model,
-            torch_dtype=dtype,
-            variant="fp16" if dtype == torch.float16 else None
-        )
+        try:
+            pipe = StableDiffusionXLPipeline.from_pretrained(
+                base_model,
+                torch_dtype=dtype,
+                variant="fp16" if dtype == torch.float16 else None,
+                cache_dir=cache_dir,
+                local_files_only=is_cached
+            )
+        except Exception as e:
+            if is_cached and ("not found" in str(e).lower() or "file" in str(e).lower()):
+                print(f"  ⚠️  Cache incomplete, downloading missing files...")
+                pipe = StableDiffusionXLPipeline.from_pretrained(
+                    base_model,
+                    torch_dtype=dtype,
+                    variant="fp16" if dtype == torch.float16 else None,
+                    cache_dir=cache_dir
+                )
+            else:
+                raise
         
         # Load Lightning UNet checkpoint
         print(f"  Loading Lightning UNet checkpoint: {checkpoint_name}")
         unet = UNet2DConditionModel.from_config(base_model, subfolder="unet")
         checkpoint_path = hf_hub_download(lightning_repo, checkpoint_name)
+        # Use to_empty() when moving from meta device to real device
+        unet = unet.to_empty(device=device)
         unet.load_state_dict(load_file(checkpoint_path, device=device))
-        unet = unet.to(device).to(dtype)
+        unet = unet.to(dtype)
         
         # Replace UNet in pipeline
         pipe.unet = unet
@@ -323,8 +432,17 @@ def get_sdxl_lightning_pipeline(num_inference_steps=4):
         
         pipe = pipe.to(device)
         
-        # Enable attention slicing for memory efficiency
-        pipe.enable_attention_slicing()
+        # Enable xformers for CUDA (faster attention computation)
+        if device == "cuda" and XFORMERS_AVAILABLE:
+            try:
+                pipe.enable_xformers_memory_efficient_attention()
+                print("  ✓ XFormers enabled (faster attention)")
+            except Exception:
+                pass  # xformers might not be compatible with this model
+        
+        # Enable attention slicing only if configured (disabled for GPU by default)
+        if ENABLE_ATTENTION_SLICING:
+            pipe.enable_attention_slicing()
         
         # Optional CPU offload (adds latency on MPS)
         if ENABLE_CPU_OFFLOAD:
@@ -494,18 +612,38 @@ def generate_with_sd14(prompt, negative_prompt, output_path="generated_poster_sd
     
     try:
         model_id = "CompVis/stable-diffusion-v1-4"
+        cache_dir = get_huggingface_cache_dir()
+        is_cached = _is_model_cached_locally(model_id)
         
         print(f"Loading SD 1.4 on {device}...")
-        pipe = DiffusionPipeline.from_pretrained(
-            model_id,
-            torch_dtype=dtype,
-            safety_checker=None,
-            requires_safety_checker=False
-        )
+        if is_cached:
+            print(f"✓ Model found in cache")
+        try:
+            pipe = DiffusionPipeline.from_pretrained(
+                model_id,
+                torch_dtype=dtype,
+                safety_checker=None,
+                requires_safety_checker=False,
+                cache_dir=cache_dir,
+                local_files_only=is_cached
+            )
+        except Exception as e:
+            if is_cached and ("not found" in str(e).lower() or "file" in str(e).lower()):
+                print(f"⚠️  Cache incomplete, downloading...")
+                pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False,
+                    cache_dir=cache_dir
+                )
+            else:
+                raise
         pipe = pipe.to(device)
         
-        # Enable attention slicing for memory efficiency
-        pipe.enable_attention_slicing()
+        # Enable attention slicing only if configured (disabled for GPU by default)
+        if ENABLE_ATTENTION_SLICING:
+            pipe.enable_attention_slicing()
         
         print(f"Generating with {num_inference_steps} steps...")
         with torch.inference_mode():
@@ -547,14 +685,33 @@ def generate_with_sd21(prompt, negative_prompt, output_path="generated_poster_sd
     
     try:
         model_id = "stabilityai/stable-diffusion-2-1"
+        cache_dir = get_huggingface_cache_dir()
+        is_cached = _is_model_cached_locally(model_id)
         
         print(f"Loading SD 2.1 on {device}...")
-        pipe = DiffusionPipeline.from_pretrained(
-            model_id,
-            torch_dtype=dtype,
-            safety_checker=None,
-            requires_safety_checker=False
-        )
+        if is_cached:
+            print(f"✓ Model found in cache")
+        try:
+            pipe = DiffusionPipeline.from_pretrained(
+                model_id,
+                torch_dtype=dtype,
+                safety_checker=None,
+                requires_safety_checker=False,
+                cache_dir=cache_dir,
+                local_files_only=is_cached
+            )
+        except Exception as e:
+            if is_cached and ("not found" in str(e).lower() or "file" in str(e).lower()):
+                print(f"⚠️  Cache incomplete, downloading...")
+                pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False,
+                    cache_dir=cache_dir
+                )
+            else:
+                raise
         pipe = pipe.to(device)
         
         # Enable attention slicing for memory efficiency (optional)
@@ -585,6 +742,99 @@ def generate_with_sd21(prompt, negative_prompt, output_path="generated_poster_sd
         raise
 
 
+def get_turbo_pipeline():
+    """
+    Get or create cached SDXL Turbo pipeline (thread-safe).
+    Model is loaded once and reused for all requests.
+    """
+    global _pipe_cache, _cache_load_count
+    import time as time_module
+    
+    cache_key = "turbo"
+    
+    # Fast path: check cache first (no lock needed for read)
+    if cache_key in _pipe_cache and _pipe_cache[cache_key] is not None:
+        _update_cache_access(cache_key)
+        return _pipe_cache[cache_key]
+    
+    # Slow path: need to load model (acquire lock)
+    with _cache_lock:
+        # Double-check after acquiring lock
+        if cache_key in _pipe_cache and _pipe_cache[cache_key] is not None:
+            _update_cache_access(cache_key)
+            return _pipe_cache[cache_key]
+        
+        # Clear MPS cache before loading new model
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+        
+        # Enforce cache limit before loading
+        _enforce_cache_limit()
+        
+        load_start = time_module.time()
+        print("\n" + "="*60)
+        print("LOADING SDXL TURBO MODEL (First time - will be cached)")
+        print("="*60)
+        
+        device, dtype = get_device_dtype()
+        
+        model_id = "stabilityai/sdxl-turbo"
+        cache_dir = get_huggingface_cache_dir()
+        is_cached = _is_model_cached_locally(model_id)
+        
+        print(f"Loading SDXL Turbo on {device}...")
+        if is_cached:
+            print(f"✓ Model found in cache, loading from: {cache_dir}")
+        
+        try:
+            try:
+                pipe = DiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=dtype,
+                    cache_dir=cache_dir,
+                    local_files_only=is_cached
+                )
+            except Exception as e:
+                if is_cached and ("not found" in str(e).lower() or "file" in str(e).lower()):
+                    print(f"⚠️  Cache incomplete, downloading missing files...")
+                    pipe = DiffusionPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=dtype,
+                        cache_dir=cache_dir
+                    )
+                else:
+                    raise
+            pipe = pipe.to(device)
+            
+            # Enable xformers for CUDA (faster attention computation)
+            if device == "cuda" and XFORMERS_AVAILABLE:
+                try:
+                    pipe.enable_xformers_memory_efficient_attention()
+                    print("  ✓ XFormers enabled (faster attention)")
+                except Exception:
+                    pass
+            
+            # Enable attention slicing only if configured (disabled for GPU by default)
+            if ENABLE_ATTENTION_SLICING:
+                pipe.enable_attention_slicing()
+            
+            # Optional CPU offload for SDXL on 8GB models
+            if ENABLE_CPU_OFFLOAD:
+                pipe.enable_model_cpu_offload()
+            
+        except RuntimeError as e:
+            raise
+        
+        load_time = time_module.time() - load_start
+        _pipe_cache[cache_key] = pipe
+        _cache_load_count[cache_key] = _cache_load_count.get(cache_key, 0) + 1
+        _update_cache_access(cache_key)
+        print(f"✓ Model loaded and cached on {device} (took {load_time:.2f}s)")
+        print(f"  Cache load count: {_cache_load_count[cache_key]} (should be 1 if caching works!)")
+        print("="*60 + "\n")
+        return _pipe_cache[cache_key]
+
+
 def generate_with_turbo(prompt, negative_prompt, output_path="generated_poster_turbo.png", num_inference_steps=1):
     """
     SDXL Turbo - Very fast, good quality
@@ -596,31 +846,11 @@ def generate_with_turbo(prompt, negative_prompt, output_path="generated_poster_t
     print("\n" + "="*60)
     print("USING SDXL TURBO - FAST + HIGH QUALITY")
     print("="*60)
-    print("⚠️  Requires ~8GB RAM - may not work on 8GB M1 Air")
-    
-    # Clear MPS cache before loading
-    if torch.backends.mps.is_available():
-        torch.mps.empty_cache()
-    
-    device, dtype = get_device_dtype()
     
     try:
-        model_id = "stabilityai/sdxl-turbo"
-        
-        print(f"Loading SDXL Turbo on {device}...")
-        pipe = DiffusionPipeline.from_pretrained(
-            model_id,
-            torch_dtype=dtype,
-        )
-        pipe = pipe.to(device)
-        
-        # Enable attention slicing for memory efficiency
-        pipe.enable_attention_slicing()
-        
-        # Optional CPU offload for SDXL on 8GB models
-        if ENABLE_CPU_OFFLOAD:
-            pipe.enable_model_cpu_offload()
-        
+        # Get cached pipeline (loads once, reuses)
+        pipe = get_turbo_pipeline()
+            
         print(f"Generating with {num_inference_steps} step(s)...")
         with torch.inference_mode():
             image = pipe(
@@ -631,7 +861,7 @@ def generate_with_turbo(prompt, negative_prompt, output_path="generated_poster_t
                 width=512,
                 height=512,
             ).images[0]
-        
+            
         image.save(output_path)
         print(f"✓ Saved to: {output_path}\n")
         return output_path
@@ -949,13 +1179,15 @@ def print_model_comparison():
 
 def get_huggingface_cache_dir():
     """Get the Hugging Face cache directory"""
+    # Check for explicit HF_HOME environment variable (highest priority)
     cache_dir = os.getenv("HF_HOME")
     if cache_dir:
         return os.path.join(cache_dir, "hub")
     
-    # Default location
-    home = os.path.expanduser("~")
-    return os.path.join(home, ".cache", "huggingface", "hub")
+    # Default to /data/.hf_home/hub/
+    cache_path = "/data/.hf_home/hub"
+    os.makedirs(cache_path, exist_ok=True)
+    return cache_path
 
 
 def remove_model_cache(model_key):

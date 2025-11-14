@@ -8,6 +8,12 @@ Thank you for your interest in contributing to Mus2Pic! 🎉
 2. Clone your fork: `git clone https://github.com/yourusername/mus2pic.git`
 3. Create a virtual environment and install dependencies:
    ```bash
+   # Using uv (recommended - much faster):
+   uv venv
+   source .venv/bin/activate
+   uv pip install -r requirements.txt
+   
+   # Or using standard venv:
    python3 -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt

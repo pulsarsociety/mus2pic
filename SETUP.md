@@ -9,12 +9,28 @@
    ```
 
 2. **Create and activate virtual environment:**
+   
+   **Option A: Using `uv` (recommended - 10-100x faster):**
+   ```bash
+   # Install uv if you don't have it: curl -LsSf https://astral.sh/uv/install.sh | sh
+   uv venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+   
+   **Option B: Using standard venv:**
    ```bash
    python3 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 3. **Install dependencies:**
+   
+   **Using `uv` (faster):**
+   ```bash
+   uv pip install -r requirements.txt
+   ```
+   
+   **Or using pip:**
    ```bash
    pip install -r requirements.txt
    ```
@@ -64,8 +80,26 @@ Models are cached in `~/.cache/huggingface/hub/` and won't be re-downloaded.
 ## Troubleshooting
 
 ### Import Errors
+
+**"Could not import module 'AutoImageProcessor'" or diffusers import errors:**
+- This means `transformers` is missing or incompatible
+- **Quick fix script:**
+  ```bash
+  ./fix_dependencies.sh
+  ```
+- **Manual fix:**
+  ```bash
+  uv pip install --upgrade --force-reinstall "torchvision>=0.15.0" "transformers>=4.30.0,<5.0.0" "diffusers>=0.21.0"
+  # Or with pip:
+  pip install --upgrade --force-reinstall "torchvision>=0.15.0" "transformers>=4.30.0,<5.0.0" "diffusers>=0.21.0"
+  ```
+  
+  **Note:** `torchvision` is required for `transformers` to work properly (needed for `AutoImageProcessor`).
+
+**General import errors:**
 - Make sure virtual environment is activated
-- Run: `pip install -r requirements.txt`
+- Run: `uv pip install -r requirements.txt` (or `pip install -r requirements.txt`)
+- If issues persist, try: `uv pip install --upgrade -r requirements.txt`
 
 ### Out of Memory
 - Start with LCM model (smallest)
