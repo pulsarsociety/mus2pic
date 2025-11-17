@@ -306,8 +306,8 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
     else:
         cache = {}
     
-    # Cache key combines both band and song for better accuracy
-    cache_key = f"{band_name.lower().strip()}|||{song_title.lower().strip() if song_title else ''}"
+    # Cache key is just the band name (genres are artist-level, not song-level)
+    cache_key = band_name.lower().strip()
     
     if cache_key in cache:
         cached = cache[cache_key]
@@ -322,6 +322,8 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "a162aa98a7f4481c83e57c835e2057fa")
     
     if not client_id or not client_secret:
+        # Cache key is just band name
+        cache_key = band_name.lower().strip()
         cache[cache_key] = "abstract"
         with open(cache_file, "w") as f:
             json.dump(cache, f)
@@ -560,6 +562,8 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
         
     except Exception as e:
         print(f"❌ Spotify API error: {e}", file=sys.stderr)
+        # Cache key is just band name
+        cache_key = band_name.lower().strip()
         cache[cache_key] = "abstract"
         with open(cache_file, "w") as f:
             json.dump(cache, f)
