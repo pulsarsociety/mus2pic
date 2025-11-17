@@ -145,7 +145,10 @@ def normalize_genre(raw_genres):
         "death metal": 7,
         "doom metal": 7,
         "metalcore": 7,
+        "thrash metal": 7,
+        "nu metal": 6,
         "metal": 5,
+        
         # --- Rock hierarchy ---
         "psychedelic rock": 9,
         "progressive rock": 9,
@@ -155,26 +158,94 @@ def normalize_genre(raw_genres):
         "indie rock": 7,
         "grunge": 7,
         "punk rock": 7,
+        "post-rock": 8,
         "rock": 5,
-        # --- Electronic / pop ---
+        
+        # --- Jazz hierarchy ---
+        "free jazz": 9,
+        "fusion": 9,
+        "bebop": 8,
+        "cool jazz": 8,
+        "smooth jazz": 7,
+        "jazz funk": 7,
+        "contemporary jazz": 7,
+        "jazz": 6,
+        
+        # --- Blues hierarchy ---
+        "delta blues": 8,
+        "electric blues": 7,
+        "blues rock": 7,
+        "blues": 6,
+        
+        # --- Soul / R&B / Funk ---
+        "neo soul": 8,
+        "funk": 7,
+        "soul": 7,
+        "r&b": 6,
+        "rhythm and blues": 6,
+        "motown": 7,
+        "disco": 6,
+        
+        # --- Hip-Hop / Rap ---
+        "conscious hip hop": 8,
+        "trap": 7,
+        "boom bap": 7,
+        "gangsta rap": 7,
+        "hip hop": 6,
+        "rap": 6,
+        
+        # --- Electronic / EDM ---
         "synthpop": 9,
         "electropop": 8,
-        "dance pop": 7,
-        "pop": 6,
-        "electronic": 6,
-        "techno": 6,
+        "techno": 7,
+        "house": 7,
+        "trance": 7,
+        "drum and bass": 7,
+        "dubstep": 7,
         "edm": 6,
-        # --- Folk / world ---
+        "electronic": 6,
+        
+        # --- Pop ---
+        "dance pop": 7,
+        "indie pop": 7,
+        "pop": 6,
+        
+        # --- Country / Folk ---
         "folk rock": 8,
+        "americana": 7,
+        "bluegrass": 7,
+        "country": 6,
         "folk": 7,
+        
+        # --- World / Regional ---
+        "afrobeat": 8,
+        "reggae": 7,
+        "latin": 6,
         "world": 6,
-        # --- Abstract / experimental ---
-        "post-rock": 8,
+        "bossa nova": 7,
+        "flamenco": 7,
+        
+        # --- Classical / Orchestral ---
+        "contemporary classical": 8,
+        "orchestral": 7,
+        "classical": 6,
+        "opera": 7,
+        "baroque": 7,
+        
+        # --- Experimental / Ambient ---
+        "avant-garde": 9,
+        "experimental": 8,
         "ambient": 7,
-        "avant-garde": 7,
         "drone": 6,
+        "noise": 6,
+        "industrial": 7,
+        
+        # --- Other ---
         "slowcore": 6,
-        "southern gothic": 6,
+        "shoegaze": 7,
+        "emo": 6,
+        "ska": 6,
+        "gospel": 6,
         "abstract": 5,
     }
     
@@ -1183,6 +1254,7 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     
     # GENRE FLAVOR - MUCH shorter variants
     genre_flavors = {
+        # Metal
         "symphonic metal": ["orchestral storm", "cathedral grandeur", "epic layers", "celestial power"],
         "progressive metal": ["fractal geometry", "cosmic drift", "technical precision", "astral minimal"],
         "gothic metal": ["romantic darkness", "velvet decay", "baroque shadows", "somber ritual"],
@@ -1192,8 +1264,12 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "death metal": ["visceral brutality", "crushing doom", "technical violence", "primal fury"],
         "black metal": ["frozen fury", "desolate void", "atmospheric hate", "raw darkness"],
         "doom metal": ["earth-crushing", "funeral procession", "psychedelic despair", "monolithic"],
+        "thrash metal": ["relentless aggression", "speed violence", "razor precision", "raw power"],
+        "nu metal": ["urban chaos", "digital rage", "industrial angst", "modern brutality"],
+        "metal": ["heavy force", "dark power", "aggressive weight", "metallic drive"],
+        
+        # Rock
         "post-rock": ["cathartic crescendo", "infinite horizon", "narrative journey", "minimal beauty"],
-        "ambient": ["cosmic stillness", "void meditation", "layered dimensions", "pure frequency"],
         "psychedelic rock": ["kaleidoscopic", "dreamy dissolution", "recursive patterns", "color distortion"],
         "progressive rock": ["technical mastery", "conceptual meditation", "structured epic", "retro-futurist"],
         "alternative rock": ["urban grit", "suburban melancholy", "layered angst", "raw honesty"],
@@ -1202,13 +1278,94 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "indie rock": ["playful chaos", "bedroom intimacy", "clever layers", "DIY purity"],
         "punk rock": ["anarchic fury", "quiet resistance", "political message", "raw defiance"],
         "hard rock": ["amplified aggression", "heavy contemplation", "layered riffs", "pure force"],
-        "pop": ["euphoric celebration", "soft intimacy", "polished perfection", "pure hooks"],
+        "rock": ["electric energy", "driving rhythm", "guitar power", "raw sound"],
+        
+        # Jazz
+        "free jazz": ["chaotic improvisation", "spontaneous freedom", "abstract expression", "wild energy"],
+        "fusion": ["hybrid complexity", "electric sophistication", "groove synthesis", "technical flow"],
+        "bebop": ["rapid complexity", "harmonic adventure", "virtuosic speed", "jazz essence"],
+        "cool jazz": ["sophisticated calm", "elegant restraint", "smooth intellectualism", "refined atmosphere"],
+        "smooth jazz": ["polished grooves", "radio elegance", "commercial sophistication", "easy listening"],
+        "jazz funk": ["syncopated groove", "electric soul", "rhythmic fusion", "funky sophistication"],
+        "contemporary jazz": ["modern elegance", "evolved tradition", "fresh sophistication", "current expression"],
+        "jazz": ["swing sophistication", "improvisational flow", "blue note mood", "syncopated elegance"],
+        
+        # Blues
+        "delta blues": ["raw authenticity", "rural soul", "acoustic pain", "roots essence"],
+        "electric blues": ["amplified emotion", "urban grit", "powerful bends", "electric soul"],
+        "blues rock": ["guitar fury", "rock intensity", "blues power", "electric passion"],
+        "blues": ["deep feeling", "soulful pain", "twelve-bar truth", "emotional depth"],
+        
+        # Soul / R&B / Funk
+        "neo soul": ["modern warmth", "contemporary soul", "smooth evolution", "refined emotion"],
+        "funk": ["syncopated groove", "tight pocket", "rhythmic punch", "percussive soul"],
+        "soul": ["emotional depth", "vocal power", "heartfelt expression", "pure feeling"],
+        "r&b": ["smooth grooves", "vocal intimacy", "rhythmic soul", "contemporary feeling"],
+        "rhythm and blues": ["soulful rhythm", "emotional groove", "classic feel", "heartfelt beats"],
+        "motown": ["polished soul", "pop elegance", "Detroit sound", "classic groove"],
+        "disco": ["mirror ball energy", "dance euphoria", "funky glamour", "groove celebration"],
+        
+        # Hip-Hop / Rap
+        "conscious hip hop": ["lyrical depth", "social awareness", "intellectual flow", "message power"],
+        "trap": ["heavy 808s", "hi-hat rolls", "dark atmosphere", "southern sound"],
+        "boom bap": ["classic drums", "sample soul", "90s essence", "golden era"],
+        "gangsta rap": ["street reality", "raw narrative", "west coast sound", "hard truth"],
+        "hip hop": ["rhythmic flow", "urban poetry", "breakbeat soul", "street culture"],
+        "rap": ["verbal dexterity", "rhythmic speech", "lyrical prowess", "flow mastery"],
+        
+        # Electronic / EDM
         "synthpop": ["digital ecstasy", "retro glow", "layered synthesis", "clean digital"],
-        "electronic": ["cybernetic pulse", "ambient circuitry", "algorithmic depth", "pure waveform"],
-        "edm": ["festival explosion", "gentle pulse", "drop architecture", "pure kick"],
+        "electropop": ["neon pop", "electronic hooks", "synthetic charm", "digital pop"],
         "techno": ["relentless machine", "hypnotic loop", "modular precision", "raw rhythm"],
-        "folk": ["dancing tradition", "fireside storytelling", "cultural tapestry", "acoustic purity"],
+        "house": ["four-on-floor", "disco evolution", "club pulse", "dance spirit"],
+        "trance": ["euphoric build", "epic progression", "emotional journey", "hypnotic ascent"],
+        "drum and bass": ["breakbeat fury", "sub-bass power", "rapid energy", "jungle evolution"],
+        "dubstep": ["wobble bass", "half-time power", "sub frequency", "bass aggression"],
+        "edm": ["festival explosion", "gentle pulse", "drop architecture", "pure kick"],
+        "electronic": ["cybernetic pulse", "ambient circuitry", "algorithmic depth", "pure waveform"],
+        
+        # Pop
+        "dance pop": ["infectious energy", "club euphoria", "pop hooks", "dance floor"],
+        "indie pop": ["quirky charm", "DIY sophistication", "bedroom production", "alternative hooks"],
+        "pop": ["euphoric celebration", "soft intimacy", "polished perfection", "pure hooks"],
+        
+        # Country / Folk
         "folk rock": ["electrified roots", "pastoral calm", "narrative weaving", "folk honesty"],
+        "americana": ["rootsy authenticity", "heartland soul", "storytelling tradition", "rural poetry"],
+        "bluegrass": ["acoustic virtuosity", "mountain harmony", "rapid picking", "traditional roots"],
+        "country": ["heartland stories", "twang emotion", "rural authenticity", "Nashville sound"],
+        "folk": ["dancing tradition", "fireside storytelling", "cultural tapestry", "acoustic purity"],
+        
+        # World / Regional
+        "afrobeat": ["polyrhythmic power", "funk fusion", "political groove", "African pulse"],
+        "reggae": ["island rhythm", "offbeat groove", "roots vibration", "Caribbean soul"],
+        "latin": ["rhythmic passion", "tropical heat", "dance culture", "Latin fire"],
+        "world": ["cultural fusion", "global rhythm", "ethnic texture", "world sound"],
+        "bossa nova": ["cool sophistication", "Brazilian elegance", "jazz samba", "tropical smooth"],
+        "flamenco": ["passionate drama", "Spanish fire", "guitar intensity", "emotional dance"],
+        
+        # Classical / Orchestral
+        "contemporary classical": ["modern composition", "evolved tradition", "experimental orchestration", "current classical"],
+        "orchestral": ["symphonic grandeur", "instrumental power", "ensemble majesty", "orchestral sweep"],
+        "classical": ["timeless elegance", "formal beauty", "compositional mastery", "refined tradition"],
+        "opera": ["dramatic vocals", "theatrical grandeur", "emotional intensity", "vocal drama"],
+        "baroque": ["ornate complexity", "period elegance", "contrapuntal beauty", "historical richness"],
+        
+        # Experimental / Ambient
+        "avant-garde": ["boundary breaking", "experimental edge", "unconventional form", "artistic risk"],
+        "experimental": ["sonic exploration", "unconventional structure", "pushing boundaries", "artistic innovation"],
+        "ambient": ["cosmic stillness", "void meditation", "layered dimensions", "pure frequency"],
+        "drone": ["sustained tones", "minimal evolution", "meditative hum", "sonic persistence"],
+        "noise": ["textural chaos", "anti-musical", "sonic assault", "pure sound"],
+        "industrial": ["mechanical aggression", "factory rhythm", "harsh electronics", "dystopian sound"],
+        
+        # Other
+        "slowcore": ["glacial patience", "minimal emotion", "sparse beauty", "slow burn"],
+        "shoegaze": ["guitar wash", "dreamy noise", "reverb depth", "wall of sound"],
+        "emo": ["emotional intensity", "confessional lyrics", "melodic angst", "heartfelt pain"],
+        "ska": ["upbeat offbeat", "horn section", "bouncing rhythm", "Caribbean punk"],
+        "gospel": ["spiritual power", "choir majesty", "religious fervor", "vocal testimony"],
+        
         "abstract": ["flowing forms", "ethereal shapes", "pure expression", "sonic essence"],
     }
     
