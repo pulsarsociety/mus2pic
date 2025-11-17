@@ -203,20 +203,23 @@ def normalize_genre(raw_genres):
 
 def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.json"):
     """
-    Attempts to get genre from Spotify API using band/artist name with multiple fallback strategies.
+    ROBUST multi-fallback Spotify genre lookup.
+    Tries multiple search strategies to find the artist.
     Returns raw genres list for refinement.
-    Falls back to None if not found.
     Caches locally to save API calls.
     
     Fallback strategies:
-    1. Search by band_name as artist
-    2. If song_title provided, try searching track and extract artist
-    3. Try band_name as track search (in case band/song were swapped)
+    1. Direct artist search: "artist:{band_name}"
+    2. Track search with both: "track:{song_title} artist:{band_name}"
+    3. Reverse search (in case swap): "track:{band_name} artist:{song_title}"
+    4. Generic track search: "{band_name}"
+    5. Combined search: "{band_name} {song_title}"
+    6. Cleaned band name (remove common suffixes)
     """
     if not SPOTIPY_AVAILABLE:
         return None
     
-    # --- Load cache if exists ---
+    # --- Load cache ---
     if os.path.exists(cache_file):
         try:
             with open(cache_file, "r") as f:
@@ -226,26 +229,23 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
     else:
         cache = {}
     
-    # Cache key is only band name (not song title)
-    key = band_name.lower().strip()
-    if key in cache:
-        # Return cached raw genres (could be list or None)
-        cached = cache[key]
-        if cached != "abstract":
-            # Print cached genres to stderr (not suppressed by redirect_stdout)
+    # Cache key combines both band and song for better accuracy
+    cache_key = f"{band_name.lower().strip()}|||{song_title.lower().strip() if song_title else ''}"
+    
+    if cache_key in cache:
+        cached = cache[cache_key]
+        if cached and cached != "abstract":
             if isinstance(cached, list) and cached:
-                print(f"🎵 Spotify raw genres (cached) for '{band_name}': {cached}", file=sys.stderr)
-            return cached
+                print(f"🎵 Spotify genres (cached): {cached}", file=sys.stderr)
+            return cached if cached != "abstract" else None
         return None
     
-    # --- Spotify credentials (env vars with fallback to your credentials) ---
-    # Get credentials from: https://developer.spotify.com/dashboard
-    # Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env file (optional)
+    # --- Spotify credentials ---
     client_id = os.getenv("SPOTIFY_CLIENT_ID", "5637c929e8794d9ea917d12963507696")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "a162aa98a7f4481c83e57c835e2057fa")
     
     if not client_id or not client_secret:
-        cache[key] = "abstract"
+        cache[cache_key] = "abstract"
         with open(cache_file, "w") as f:
             json.dump(cache, f)
         return None
@@ -254,75 +254,157 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
         sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
             client_id=client_id, client_secret=client_secret))
         
+        # Clean band name - remove common junk
+        def clean_artist_name(name):
+            """Remove common YouTube channel suffixes and junk."""
+            if not name:
+                return name
+            cleaned = name
+            # Remove common suffixes
+            suffixes = [
+                ' - Topic', ' Topic', 'VEVO', 'Official', 
+                'Channel', 'Music', 'Records', 'Label',
+                'HD', 'HQ', '4K', 'Lyrics'
+            ]
+            for suffix in suffixes:
+                cleaned = re.sub(rf'\s*-?\s*{suffix}\s*$', '', cleaned, flags=re.IGNORECASE)
+            # Remove brackets/parens at end
+            cleaned = re.sub(r'\s*[\[\(].*?[\]\)]\s*$', '', cleaned)
+            return cleaned.strip()
+        
+        cleaned_band = clean_artist_name(band_name)
+        cleaned_song = clean_artist_name(song_title) if song_title else None
+        
         artist_id = None
-        search_attempts = []
+        found_artist_name = None
+        search_method = None
         
-        # Strategy 1: Search for artist directly by band_name
-        print(f"🔍 Searching Spotify for artist: '{band_name}'", file=sys.stderr)
-        results = sp.search(q=f"artist:{band_name}", type='artist', limit=1)
-        if results['artists']['items']:
-            artist_id = results['artists']['items'][0]['id']
-            search_attempts.append(f"artist:{band_name} (direct)")
-        else:
-            # Strategy 2: If song_title provided, try searching track and extract artist
-            if song_title:
-                print(f"🔍 Fallback: Searching track '{song_title}' by '{band_name}'", file=sys.stderr)
-                track_query = f"track:{song_title} artist:{band_name}"
-                results = sp.search(q=track_query, type='track', limit=1)
+        # === STRATEGY 1: Direct artist search ===
+        print(f"🔍 Strategy 1: Searching artist '{cleaned_band}'", file=sys.stderr)
+        try:
+            results = sp.search(q=f"artist:{cleaned_band}", type='artist', limit=1)
+            if results['artists']['items']:
+                artist_id = results['artists']['items'][0]['id']
+                found_artist_name = results['artists']['items'][0]['name']
+                search_method = "direct artist search"
+                print(f"✓ Found: {found_artist_name}", file=sys.stderr)
+        except Exception as e:
+            print(f"  Strategy 1 failed: {e}", file=sys.stderr)
+        
+        # === STRATEGY 2: Track + Artist search ===
+        if not artist_id and cleaned_song:
+            print(f"🔍 Strategy 2: Searching track '{cleaned_song}' by '{cleaned_band}'", file=sys.stderr)
+            try:
+                results = sp.search(q=f"track:{cleaned_song} artist:{cleaned_band}", type='track', limit=5)
                 if results['tracks']['items']:
-                    artist_id = results['tracks']['items'][0]['artists'][0]['id']
-                    found_artist = results['tracks']['items'][0]['artists'][0]['name']
-                    search_attempts.append(f"track:{song_title} artist:{band_name} (found: {found_artist})")
-                else:
-                    # Strategy 3: Try band_name as track (in case band/song were swapped)
-                    print(f"🔍 Fallback: Trying '{band_name}' as track name (possible swap)", file=sys.stderr)
-                    results = sp.search(q=f"track:{band_name}", type='track', limit=1)
-                    if results['tracks']['items']:
+                    # Pick the result with most matching artist name
+                    best_match = None
+                    best_score = 0
+                    for track in results['tracks']['items']:
+                        for artist in track['artists']:
+                            # Simple fuzzy match
+                            artist_lower = artist['name'].lower()
+                            band_lower = cleaned_band.lower()
+                            if band_lower in artist_lower or artist_lower in band_lower:
+                                score = len(set(band_lower.split()) & set(artist_lower.split()))
+                                if score > best_score:
+                                    best_score = score
+                                    best_match = artist
+                    
+                    if best_match:
+                        artist_id = best_match['id']
+                        found_artist_name = best_match['name']
+                        search_method = "track+artist search"
+                        print(f"✓ Found: {found_artist_name}", file=sys.stderr)
+                    else:
+                        # Just take first result
                         artist_id = results['tracks']['items'][0]['artists'][0]['id']
-                        found_artist = results['tracks']['items'][0]['artists'][0]['name']
-                        search_attempts.append(f"track:{band_name} (found artist: {found_artist})")
-                        print(f"⚠️  Possible band/song swap detected! Found artist '{found_artist}' when searching for track '{band_name}'", file=sys.stderr)
-            
-            # Strategy 4: Generic track search with band_name (last resort)
-            if not artist_id:
-                print(f"🔍 Fallback: Generic search for '{band_name}'", file=sys.stderr)
-                results = sp.search(q=band_name, type='track', limit=1)
+                        found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
+                        search_method = "track search (first result)"
+                        print(f"⚠️  Using first result: {found_artist_name}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Strategy 2 failed: {e}", file=sys.stderr)
+        
+        # === STRATEGY 3: Reverse search (band/song might be swapped) ===
+        if not artist_id and cleaned_song:
+            print(f"🔍 Strategy 3: Reverse search - trying '{cleaned_song}' as artist", file=sys.stderr)
+            try:
+                results = sp.search(q=f"artist:{cleaned_song}", type='artist', limit=1)
+                if results['artists']['items']:
+                    artist_id = results['artists']['items'][0]['id']
+                    found_artist_name = results['artists']['items'][0]['name']
+                    search_method = "reverse search (swap detected)"
+                    print(f"✓ SWAP DETECTED! Found artist: {found_artist_name}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Strategy 3 failed: {e}", file=sys.stderr)
+        
+        # === STRATEGY 4: Generic track search ===
+        if not artist_id:
+            print(f"🔍 Strategy 4: Generic track search '{cleaned_band}'", file=sys.stderr)
+            try:
+                results = sp.search(q=cleaned_band, type='track', limit=1)
                 if results['tracks']['items']:
                     artist_id = results['tracks']['items'][0]['artists'][0]['id']
-                    found_artist = results['tracks']['items'][0]['artists'][0]['name']
-                    search_attempts.append(f"generic:{band_name} (found: {found_artist})")
+                    found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
+                    search_method = "generic track search"
+                    print(f"✓ Found: {found_artist_name}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Strategy 4 failed: {e}", file=sys.stderr)
         
+        # === STRATEGY 5: Combined search (both terms together) ===
+        if not artist_id and cleaned_song:
+            combined = f"{cleaned_band} {cleaned_song}"
+            print(f"🔍 Strategy 5: Combined search '{combined}'", file=sys.stderr)
+            try:
+                results = sp.search(q=combined, type='track', limit=1)
+                if results['tracks']['items']:
+                    artist_id = results['tracks']['items'][0]['artists'][0]['id']
+                    found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
+                    search_method = "combined search"
+                    print(f"✓ Found: {found_artist_name}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Strategy 5 failed: {e}", file=sys.stderr)
+        
+        # === STRATEGY 6: Try original uncleaned names ===
+        if not artist_id and cleaned_band != band_name:
+            print(f"🔍 Strategy 6: Trying original name '{band_name}'", file=sys.stderr)
+            try:
+                results = sp.search(q=f"artist:{band_name}", type='artist', limit=1)
+                if results['artists']['items']:
+                    artist_id = results['artists']['items'][0]['id']
+                    found_artist_name = results['artists']['items'][0]['name']
+                    search_method = "original name (uncleaned)"
+                    print(f"✓ Found: {found_artist_name}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Strategy 6 failed: {e}", file=sys.stderr)
+        
+        # === GIVE UP ===
         if not artist_id:
-            cache[key] = "abstract"
+            cache[cache_key] = "abstract"
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
-            print(f"⚠️  No artist found on Spotify for '{band_name}' (tried: {', '.join(search_attempts) if search_attempts else 'direct search'})", file=sys.stderr)
+            print(f"❌ No artist found after all strategies for '{band_name}'", file=sys.stderr)
             return None
         
+        # === GET GENRES ===
         artist = sp.artist(artist_id)
         raw_genres = artist.get('genres', [])
-        found_artist_name = artist.get('name', 'Unknown')
         
-        # Print raw genres from Spotify to stderr (not suppressed by redirect_stdout)
         if raw_genres:
-            print(f"🎵 Spotify raw genres for '{found_artist_name}' (searched as '{band_name}'): {raw_genres}", file=sys.stderr)
+            print(f"🎵 Spotify genres for '{found_artist_name}': {raw_genres} (via {search_method})", file=sys.stderr)
+            cache[cache_key] = raw_genres
         else:
-            print(f"⚠️  No genres found on Spotify for '{found_artist_name}' (searched as '{band_name}')", file=sys.stderr)
-        
-        # Cache raw genres (list) - cache under the searched name, not found name
-        # This way if we search for the same wrong name again, we get the cached result
-        if raw_genres:
-            cache[key] = raw_genres
-        else:
-            cache[key] = "abstract"
+            print(f"⚠️  No genres for '{found_artist_name}' (via {search_method})", file=sys.stderr)
+            cache[cache_key] = "abstract"
         
         with open(cache_file, "w") as f:
             json.dump(cache, f)
         
         return raw_genres if raw_genres else None
+        
     except Exception as e:
-        print(f"Warning: Could not get genre from Spotify: {e}", file=sys.stderr)
-        cache[key] = "abstract"
+        print(f"❌ Spotify API error: {e}", file=sys.stderr)
+        cache[cache_key] = "abstract"
         with open(cache_file, "w") as f:
             json.dump(cache, f)
         return None
@@ -564,6 +646,29 @@ def download_audio(youtube_url):
             song = re.sub(r'^[「『]|[''」』]$', '', song)  # Remove Japanese brackets if still present
             song = song.strip()
             
+            # Aggressive cleanup - final pass to remove all remaining junk
+            def aggressive_cleanup(text):
+                """Final cleanup pass to remove all remaining junk."""
+                if not text:
+                    return text
+                
+                # Remove everything after common indicators
+                text = re.split(r'\s*[\|\–\—]\s*Official', text, flags=re.IGNORECASE)[0]
+                text = re.split(r'\s*[\|\–\—]\s*Lyrics', text, flags=re.IGNORECASE)[0]
+                text = re.split(r'\s*[\|\–\—]\s*Audio', text, flags=re.IGNORECASE)[0]
+                
+                # Remove all parentheses and brackets with content
+                text = re.sub(r'\s*[\[\(].*?[\]\)]', '', text)
+                
+                # Remove trailing quality indicators
+                text = re.sub(r'\s*(HD|HQ|4K|8K|Official|Lyric|Video|Audio).*$', '', text, flags=re.IGNORECASE)
+                
+                return text.strip()
+            
+            # Apply aggressive cleanup to both band and song AFTER extraction
+            band = aggressive_cleanup(band)
+            song = aggressive_cleanup(song)
+            
             # Detect potential issues with extracted metadata
             # Check if band name looks like a song title or venue name
             venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']
@@ -693,6 +798,29 @@ def download_audio(youtube_url):
                 song = re.sub(r'\s*\(.*?\)$', '', song)
                 song = re.sub(r'\s*-\s*Official.*$', '', song, flags=re.IGNORECASE)
                 song = song.strip()
+                
+                # Aggressive cleanup - final pass to remove all remaining junk (same as first attempt)
+                def aggressive_cleanup(text):
+                    """Final cleanup pass to remove all remaining junk."""
+                    if not text:
+                        return text
+                    
+                    # Remove everything after common indicators
+                    text = re.split(r'\s*[\|\–\—]\s*Official', text, flags=re.IGNORECASE)[0]
+                    text = re.split(r'\s*[\|\–\—]\s*Lyrics', text, flags=re.IGNORECASE)[0]
+                    text = re.split(r'\s*[\|\–\—]\s*Audio', text, flags=re.IGNORECASE)[0]
+                    
+                    # Remove all parentheses and brackets with content
+                    text = re.sub(r'\s*[\[\(].*?[\]\)]', '', text)
+                    
+                    # Remove trailing quality indicators
+                    text = re.sub(r'\s*(HD|HQ|4K|8K|Official|Lyric|Video|Audio).*$', '', text, flags=re.IGNORECASE)
+                    
+                    return text.strip()
+                
+                # Apply aggressive cleanup to both band and song AFTER extraction
+                band = aggressive_cleanup(band)
+                song = aggressive_cleanup(song)
                 
                 # Detect potential issues with extracted metadata (same as first attempt)
                 venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']

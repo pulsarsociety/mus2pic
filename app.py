@@ -28,7 +28,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from test import download_audio, analyze_audio, audio_to_prompt, audio_to_prompt_v3, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
+from audio_processor import download_audio, analyze_audio, audio_to_prompt, audio_to_prompt_v3, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
 from model_options import generate_with_lcm, generate_with_sd14, generate_with_sd21, generate_with_turbo, generate_with_lcm_sd21, generate_with_sdxl_lightning, MODEL_REGISTRY
 
 app = FastAPI(title="Mus2Pic", description="Transform music into visual art")
