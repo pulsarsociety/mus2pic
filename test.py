@@ -634,30 +634,69 @@ def download_audio(youtube_url):
 # 2. Analyze audio
 def analyze_audio(audio_path, duration=None):
     """
-    Analyze audio features from the audio file.
-    
+    Enhanced audio analysis extracting multiple features for better prompt generation.
+
     Args:
         audio_path: Path to the audio file
         duration: Duration in seconds to analyze. None means full length.
-    
+
     Returns:
-        Dictionary with audio features (tempo, brightness, energy, etc.)
+        Dictionary with comprehensive audio features
     """
     # Load audio - if duration is None, load full length
     if duration is None:
         y, sr = librosa.load(audio_path)  # Full length
     else:
         y, sr = librosa.load(audio_path, duration=duration)  # Specific duration
-    
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+
+    # Basic features
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
     spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
     energy = np.mean(librosa.feature.rms(y=y))
-    
+
+    # Spectral rolloff - indicates brightness/darkness (frequency above which 85% of energy is contained)
+    spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr, roll_percent=0.85))
+
+    # Zero crossing rate - indicates percussiveness/noise content
+    zcr = np.mean(librosa.feature.zero_crossing_rate(y))
+
+    # Chroma - harmonic content (captures tonal complexity)
+    chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+    chroma_std = np.std(chroma)  # Harmonic complexity/variation
+
+    # MFCC - timbre characteristics (texture of sound)
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfcc_mean = np.mean(mfccs, axis=1)
+    mfcc_std = np.std(mfccs, axis=1)
+
+    # Rhythm stability (beat consistency)
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    rhythm_stability = 1.0 - np.clip(np.std(onset_env) / (np.mean(onset_env) + 1e-6), 0, 1)
+
+    # Harmonic vs percussive separation
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+    harmonicity = np.mean(librosa.feature.rms(y=y_harmonic)) / (energy + 1e-6)
+
+    # Spectral bandwidth - indicates "purity" vs "noisiness"
+    spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr))
+
+    # Spectral contrast - indicates dynamic range and texture
+    spectral_contrast = np.mean(librosa.feature.spectral_contrast(y=y, sr=sr))
+
     return {
-        'tempo': tempo,
-        'brightness': spectral_centroid,
-        'spectral_centroid': spectral_centroid,  # Also include with expected key name
-        'energy': energy
+        'tempo': float(tempo),
+        'brightness': float(spectral_centroid),
+        'spectral_centroid': float(spectral_centroid),
+        'energy': float(energy),
+        'spectral_rolloff': float(spectral_rolloff),
+        'spectral_bandwidth': float(spectral_bandwidth),
+        'spectral_contrast': float(spectral_contrast),
+        'zcr': float(zcr),
+        'chroma_std': float(chroma_std),
+        'rhythm_stability': float(np.clip(rhythm_stability, 0, 1)),
+        'harmonicity': float(np.clip(harmonicity, 0, 1)),
+        'mfcc_mean': mfcc_mean.tolist(),
+        'mfcc_std': mfcc_std.tolist()
     }
 
 def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=False):
@@ -766,10 +805,11 @@ def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=
 
 def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=None):
     """
-    Enhanced SDXL-Turbo-optimized visual identity prompt generator.
-    Mystic, symbolic, poster-ready art representing the musical essence.
-    All genres preserved. Outputs stable, aesthetic, abstract compositions.
+    HEAVILY IMPROVED: Feature-driven prompt generation that captures musical soul.
+    Uses ACTUAL audio analysis instead of defaults or random selection.
+    Every decision is now tied to measurable audio characteristics.
     """
+
     # -------------------------------
     # 1. Normalize genre
     # -------------------------------
@@ -777,146 +817,341 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     genre_key = genre_hint.lower()
 
     # -------------------------------
-    # 2. Extract features
+    # 2. Extract REAL features (no more defaults)
     # -------------------------------
     tempo = features.get("tempo", 120)
     energy = features.get("energy", 0.5)
     brightness = features.get("spectral_centroid", 3000)
-    valence = features.get("valence", 0.5)
+    rolloff = features.get("spectral_rolloff", 5000)
+    bandwidth = features.get("spectral_bandwidth", 2000)
+    contrast = features.get("spectral_contrast", 20)
+    zcr = features.get("zcr", 0.1)
+    chroma_std = features.get("chroma_std", 0.3)
+    rhythm_stability = features.get("rhythm_stability", 0.5)
+    harmonicity = features.get("harmonicity", 0.5)
+
+    # Print extracted features for debugging
+    print(f"\n🎵 Audio Features Extracted:", file=sys.stderr)
+    print(f"   Tempo: {tempo:.1f} BPM", file=sys.stderr)
+    print(f"   Energy: {energy:.3f}", file=sys.stderr)
+    print(f"   Brightness: {brightness:.1f} Hz", file=sys.stderr)
+    print(f"   Rolloff: {rolloff:.1f} Hz", file=sys.stderr)
+    print(f"   Harmonicity: {harmonicity:.3f}", file=sys.stderr)
+    print(f"   Chroma Std: {chroma_std:.3f}", file=sys.stderr)
+    print(f"   Rhythm Stability: {rhythm_stability:.3f}", file=sys.stderr)
+    print(f"   ZCR: {zcr:.4f}", file=sys.stderr)
 
     # -------------------------------
-    # 3. Mood inference (cleaned & aesthetic)
+    # 3. MOOD - Driven by harmonic complexity + energy + harmonicity
     # -------------------------------
-    if valence > 0.7:
-        mood = "euphoric uplift"
-    elif valence > 0.4:
-        mood = "reflective nostalgia"
+    if chroma_std < 0.2 and energy > 0.6:
+        mood = "aggressive focused intensity"  # Simple harmonics + high energy = raw aggression
+    elif chroma_std > 0.4 and harmonicity > 0.6:
+        mood = "complex emotional depth"  # Rich harmonics = layered emotion
+    elif harmonicity < 0.3 and zcr > 0.15:
+        mood = "chaotic raw energy"  # Percussive/noisy = chaos
+    elif chroma_std > 0.5 and energy < 0.4:
+        mood = "melancholic complexity"  # Complex but quiet = sad sophistication
+    elif energy < 0.25:
+        mood = "meditative stillness"  # Very low energy = ambient/calm
+    elif harmonicity > 0.7 and energy > 0.5:
+        mood = "euphoric uplifting power"  # Harmonic + energetic = uplifting
     else:
-        mood = "melancholic depth"
+        mood = "balanced introspective atmosphere"
 
     # -------------------------------
-    # 4. Lighting / tone (Turbo-friendly)
+    # 4. LIGHTING/TONE - Driven by brightness + rolloff + contrast
     # -------------------------------
-    if energy > 0.7:
-        tone = "bold high-contrast lighting"
-    elif energy > 0.4:
-        tone = "cinematic soft-contrast lighting"
+    if rolloff > 7000 and brightness > 4000:
+        tone = "piercing bright highlights, sharp high-contrast lighting"  # Very bright = sharp
+    elif rolloff < 3000 and brightness < 2000:
+        tone = "deep shadows, heavy darkness, muted tones"  # Dark = shadowy
+    elif contrast > 25:
+        tone = "dramatic chiaroscuro, bold light-dark interplay"  # High contrast = dramatic
+    elif brightness > 3500:
+        tone = "luminous ethereal glow, soft radiance"  # Bright but not harsh
     else:
-        tone = "muted diffused lighting"
+        tone = "balanced cinematic lighting, atmospheric depth"
 
     # -------------------------------
-    # 5. Motion / rhythm interpretation
+    # 5. MOTION - Driven by tempo + rhythm stability
     # -------------------------------
-    if tempo > 150:
-        motion = "intense kinetic flow"
-    elif tempo > 110:
-        motion = "dynamic rhythmic movement"
+    if tempo > 160 and rhythm_stability < 0.5:
+        motion = "violent chaotic explosions, erratic movement"  # Fast + unstable = chaos
+    elif tempo > 160 and rhythm_stability > 0.7:
+        motion = "relentless machine-like precision, driving force"  # Fast + stable = mechanical
+    elif tempo > 130 and rhythm_stability > 0.6:
+        motion = "dynamic rhythmic pulse, energetic flow"  # Fast + somewhat stable = energetic
+    elif tempo < 80:
+        motion = "glacial weight, slow deliberate movement"  # Very slow = heavy
+    elif tempo < 100:
+        motion = "contemplative drift, gentle sway"  # Slow = gentle
+    elif rhythm_stability < 0.4:
+        motion = "unpredictable organic shifts, flowing chaos"  # Unstable = organic
     else:
-        motion = "slow atmospheric motion"
+        motion = "steady measured progression, balanced rhythm"
 
     # -------------------------------
-    # 6. Style accent from brightness & energy
+    # 6. TEXTURE - Driven by harmonicity + bandwidth
     # -------------------------------
-    if energy > 0.6 and brightness > 3000:
-        substyle = "radiant force and presence"
-    elif tempo < 100 and brightness < 2000:
-        substyle = "foggy isolation"
-    elif brightness > 2500 and energy < 0.3:
-        substyle = "bright minimal clarity"
+    if harmonicity > 0.7 and bandwidth < 1500:
+        texture = "pristine crystalline clarity, smooth polished surfaces"  # Pure + narrow = clean
+    elif harmonicity > 0.6:
+        texture = "layered ethereal atmosphere, soft translucent veils"  # Harmonic = smooth
+    elif harmonicity < 0.3 and zcr > 0.15:
+        texture = "jagged fractured surfaces, raw abrasive grain"  # Percussive = rough
+    elif bandwidth > 3000:
+        texture = "dense noisy complexity, rich gritty detail"  # Wide bandwidth = dense
     else:
-        substyle = "balanced atmosphere"
+        texture = "dynamic balanced depth, varied tactile quality"
 
     # -------------------------------
-    # 7. Keep ALL genres but tighten phrasing
+    # 7. COMPOSITION - Driven by energy + rhythm stability
     # -------------------------------
-    genre_flavors = {
-        "symphonic metal": [
-            "ethereal grandeur", "celestial storm", "orchestral monument", "cathedral symmetry"
-        ],
-        "progressive metal": [
-            "cosmic architecture", "fractal rhythm", "astral geometry", "dimensional complexity"
-        ],
-        "gothic metal": [
-            "dark romantic elegance", "ruined cathedral aura", "somber ritualism", "velvet decay"
-        ],
-        "folk metal": [
-            "ancient myth energy", "ritual forest essence", "runic mist", "earthbound mysticism"
-        ],
-        "power metal": [
-            "heroic blaze", "chromatic ascension", "mythic skyburst", "epic radiant storm"
-        ],
-        "metalcore": [
-            "post-apocalyptic tension", "industrial fracture", "urban collapse energy", "existential aggression"
-        ],
-        "post-rock": [
-            "endless horizon", "minimalist atmosphere", "emotional distance", "long-exposure calm"
-        ],
-        "ambient": [
-            "infinite stillness", "foglike depth", "etheric flow", "hushed dream texture"
-        ],
-        "psychedelic rock": [
-            "kaleidoscopic distortion", "dream vortex", "liquid abstraction", "color hallucination"
-        ],
-        "progressive rock": [
-            "conceptual geometry", "retro-futurist symmetry", "abstract narrative forms", "architectural rhythm"
-        ],
-        "alternative rock": [
-            "cinematic grit", "urban melancholy", "distorted emotion", "static-filled atmosphere"
-        ],
-        "classic rock": [
-            "vintage glow", "analog warmth", "timeless stage light", "retro sonic haze"
-        ],
-        "grunge": [
-            "rain-washed decay", "underground rawness", "fractured mood", "emotional distortion"
-        ],
-        "pop": [
-            "neon minimalism", "crisp modern glow", "saturated harmony", "clean vibrant shapes"
-        ],
-        "electronic": [
-            "cybernetic rhythm", "neon circuitry", "digital shimmer", "futuristic pulse"
-        ],
-        "abstract": [
-            "floating shapes", "color haze", "dreamlike blur", "intuitive motion"
-        ],
+    if energy < 0.25:
+        composition = "minimal sparse arrangement, vast negative space, centered focus"
+    elif energy < 0.5 and rhythm_stability > 0.6:
+        composition = "symmetrical layered depth, architectural balance, geometric order"
+    elif energy > 0.7 and rhythm_stability < 0.5:
+        composition = "explosive asymmetric chaos, fractured angles, dynamic instability"
+    elif energy > 0.6:
+        composition = "bold dramatic composition, aggressive positioning, powerful presence"
+    else:
+        composition = "organic flowing arrangement, natural balance, gentle curves"
+
+    # -------------------------------
+    # 8. GENRE-SPECIFIC FLAVOR - FEATURE-DRIVEN selection
+    # -------------------------------
+    # Each genre gets 4 flavors: high_energy, low_energy, complex, simple
+    genre_flavor_map = {
+        "symphonic metal": {
+            "high_energy": "apocalyptic orchestral storm, divine fury",
+            "low_energy": "gothic cathedral grandeur, sacred solemnity",
+            "complex": "symphonic architecture, layered epic construction",
+            "simple": "ethereal celestial power, pure transcendence"
+        },
+        "progressive metal": {
+            "high_energy": "fractal chaos, mathematical violence",
+            "low_energy": "cosmic contemplation, dimensional drift",
+            "complex": "geometric impossibility, nested structures",
+            "simple": "astral minimalism, spatial clarity"
+        },
+        "gothic metal": {
+            "high_energy": "romantic devastation, beautiful violence",
+            "low_energy": "velvet decay, elegant sorrow",
+            "complex": "baroque darkness, ornate shadows",
+            "simple": "somber ritual, pure melancholy"
+        },
+        "folk metal": {
+            "high_energy": "tribal warfare, primal force",
+            "low_energy": "ancient forest whispers, mystic earth",
+            "complex": "mythological tapestry, layered legend",
+            "simple": "runic simplicity, elemental power"
+        },
+        "power metal": {
+            "high_energy": "heroic blaze, triumphant ascension",
+            "low_energy": "mythic horizon, distant glory",
+            "complex": "epic narrative, legendary saga",
+            "simple": "pure valor, radiant courage"
+        },
+        "metalcore": {
+            "high_energy": "industrial collapse, urban warfare",
+            "low_energy": "post-apocalyptic silence, ruins",
+            "complex": "existential fragmentation, layered despair",
+            "simple": "brutal honesty, raw confrontation"
+        },
+        "death metal": {
+            "high_energy": "visceral brutality, savage chaos",
+            "low_energy": "doomed inevitability, crushing weight",
+            "complex": "technical precision, surgical violence",
+            "simple": "primal aggression, pure brutality"
+        },
+        "black metal": {
+            "high_energy": "frozen fury, arctic violence",
+            "low_energy": "desolate wasteland, empty void",
+            "complex": "atmospheric misanthropy, layered hatred",
+            "simple": "raw primordial darkness, pure evil"
+        },
+        "doom metal": {
+            "high_energy": "earth-crushing weight, tectonic power",
+            "low_energy": "funeral procession, eternal mourning",
+            "complex": "psychedelic despair, hallucinogenic sorrow",
+            "simple": "monolithic doom, pure heaviness"
+        },
+        "post-rock": {
+            "high_energy": "cathartic crescendo, explosive release",
+            "low_energy": "infinite horizon, peaceful dissolution",
+            "complex": "narrative journey, evolving landscape",
+            "simple": "minimal beauty, sparse elegance"
+        },
+        "ambient": {
+            "high_energy": "cosmic event, nebula birth",
+            "low_energy": "absolute stillness, void meditation",
+            "complex": "layered dimensions, sonic architecture",
+            "simple": "pure tone, essential frequency"
+        },
+        "psychedelic rock": {
+            "high_energy": "kaleidoscopic explosion, fractal madness",
+            "low_energy": "dreamy dissolution, gentle hallucination",
+            "complex": "recursive patterns, infinite depth",
+            "simple": "color-washed simplicity, pure distortion"
+        },
+        "progressive rock": {
+            "high_energy": "complex virtuosity, technical mastery",
+            "low_energy": "conceptual meditation, thoughtful progression",
+            "complex": "narrative architecture, structured epic",
+            "simple": "retro-futurist clarity, clean vision"
+        },
+        "alternative rock": {
+            "high_energy": "urban intensity, gritty rebellion",
+            "low_energy": "suburban melancholy, quiet desperation",
+            "complex": "layered angst, textured emotion",
+            "simple": "raw honesty, stripped-down truth"
+        },
+        "classic rock": {
+            "high_energy": "stadium power, timeless energy",
+            "low_energy": "vintage warmth, nostalgic glow",
+            "complex": "blues-rock tapestry, soulful layers",
+            "simple": "pure rock essence, analog clarity"
+        },
+        "grunge": {
+            "high_energy": "explosive frustration, distorted rage",
+            "low_energy": "apathetic haze, numb detachment",
+            "complex": "layered alienation, textured despair",
+            "simple": "raw unpolished truth, stripped authenticity"
+        },
+        "indie rock": {
+            "high_energy": "joyful chaos, playful rebellion",
+            "low_energy": "bedroom intimacy, quiet reflection",
+            "complex": "clever arrangement, artistic layering",
+            "simple": "DIY purity, honest simplicity"
+        },
+        "punk rock": {
+            "high_energy": "anarchic fury, three-chord rage",
+            "low_energy": "punk meditation, quiet resistance",
+            "complex": "political tapestry, message layers",
+            "simple": "raw defiance, pure rebellion"
+        },
+        "hard rock": {
+            "high_energy": "amplified aggression, driving power",
+            "low_energy": "heavy contemplation, weighted thought",
+            "complex": "layered riffs, textured heaviness",
+            "simple": "pure rock force, essential drive"
+        },
+        "pop": {
+            "high_energy": "neon euphoria, vibrant celebration",
+            "low_energy": "soft intimacy, gentle sweetness",
+            "complex": "polished production, crafted perfection",
+            "simple": "pure catchiness, minimal hooks"
+        },
+        "synthpop": {
+            "high_energy": "digital ecstasy, electric joy",
+            "low_energy": "retro nostalgia, warm synth glow",
+            "complex": "layered synthesis, electronic depth",
+            "simple": "clean digital lines, pure pop"
+        },
+        "electronic": {
+            "high_energy": "cybernetic pulse, digital assault",
+            "low_energy": "ambient circuitry, soft electrons",
+            "complex": "algorithmic complexity, coded layers",
+            "simple": "pure waveform, essential signal"
+        },
+        "edm": {
+            "high_energy": "festival explosion, peak euphoria",
+            "low_energy": "comedown drift, gentle pulse",
+            "complex": "drop architecture, build-up tension",
+            "simple": "four-on-floor purity, simple kick"
+        },
+        "techno": {
+            "high_energy": "industrial drive, relentless machine",
+            "low_energy": "minimal groove, hypnotic loop",
+            "complex": "modular maze, technical precision",
+            "simple": "raw kick, pure rhythm"
+        },
+        "folk": {
+            "high_energy": "dancing celebration, joyful tradition",
+            "low_energy": "fireside storytelling, quiet wisdom",
+            "complex": "cultural tapestry, heritage layers",
+            "simple": "acoustic purity, honest song"
+        },
+        "folk rock": {
+            "high_energy": "electrified tradition, amplified roots",
+            "low_energy": "contemplative countryside, pastoral calm",
+            "complex": "narrative folk, story weaving",
+            "simple": "simple truth, folk honesty"
+        },
+        "abstract": {
+            "high_energy": "formless energy, undefined power",
+            "low_energy": "shapeless calm, ambient void",
+            "complex": "conceptual depth, abstract layers",
+            "simple": "pure abstraction, essential form"
+        },
     }
 
-    # Deterministic flavor by band/song/genre
-    identifier = f"{band_name or ''}-{song_title or ''}-{genre_hint}"
-    seed = int(hashlib.sha256(identifier.encode()).hexdigest(), 16)
-    local_random = random.Random(seed)
-    flavor = local_random.choice(genre_flavors.get(genre_key, genre_flavors["abstract"]))
+    # Get flavor dictionary for this genre
+    flavor_dict = genre_flavor_map.get(genre_key, genre_flavor_map["abstract"])
 
-    # -------------------------------
-    # 8. Composition system (cleaner + more aesthetic)
-    # -------------------------------
-    if energy < 0.3:
-        composition = "minimal central silhouette, wide negative space"
-    elif energy < 0.6:
-        composition = "layered symmetric depth, cinematic framing"
+    # SMART SELECTION based on actual audio features
+    if energy > 0.65:
+        flavor = flavor_dict["high_energy"]
+    elif chroma_std > 0.45 or harmonicity > 0.65:
+        flavor = flavor_dict["complex"]
+    elif energy < 0.35:
+        flavor = flavor_dict["low_energy"]
     else:
-        composition = "chaotic dynamic composition, dramatic angles"
+        flavor = flavor_dict["simple"]
+
+    print(f"   Selected flavor: '{flavor}' (genre: {genre_key})", file=sys.stderr)
 
     # -------------------------------
-    # 9. FINAL SDXL-TURBO OPTIMIZED PROMPT
+    # 9. COLOR PALETTE - Driven by brightness + energy + genre
     # -------------------------------
+    if energy > 0.7 and brightness > 4000:
+        colors = "saturated neon brilliance, electric intensity"
+    elif energy > 0.6 and rolloff > 6000:
+        colors = "vivid high-energy chromas, bold hues"
+    elif brightness < 2000 and energy < 0.4:
+        colors = "desaturated darkness, muted shadows, deep blacks"
+    elif harmonicity > 0.65:
+        colors = "harmonious balanced palette, rich warm tones"
+    elif zcr > 0.15:
+        colors = "harsh contrasting colors, jarring combinations"
+    else:
+        colors = "atmospheric gradient, nuanced transitions"
+
+    # -------------------------------
+    # 10. FINAL SDXL-TURBO OPTIMIZED PROMPT
+    # -------------------------------
+    # Structure: Identity → Genre → Mood → Visual Elements → Technical Quality
     prompt = (
-        f"symbolic surreal artwork representing the musical identity of {band_name or 'the artist'}, "
-        f"inspired by the track {song_title or 'this song'}. "
-        f"{genre_hint} aesthetic, {mood}, {tone}, {motion}, {substyle}, {flavor}, "
+        f"music poster art representing {band_name or 'the artist'}, "
+        f"track: {song_title or 'this song'}. "
+        f"{genre_hint} aesthetic. "
+        f"{flavor}. "
+        f"{mood}. "
+        f"{tone}. "
+        f"{motion}. "
+        f"{texture}. "
+        f"{colors}. "
         f"{composition}. "
-        "mystic, atmospheric, poster-grade design, volumetric depth, fog layers, "
-        "high detail, abstract forms, no text, no logos, professional visual harmony."
+        f"abstract symbolic forms, no text, no faces, no letters, "
+        f"professional poster design, volumetric atmosphere, dramatic depth, "
+        f"high detail, cinematic quality, artistic coherence"
     )
 
     # -------------------------------
-    # 10. Negative prompt (TURBO-safe)
+    # 11. NEGATIVE PROMPT (Turbo-optimized)
     # -------------------------------
     negative_prompt = (
-        "text, letters, watermark, logo, signature, messy collage, realism, human faces, "
-        "photographic people, clutter, artifacts, oversharpened, low quality"
+        "text, letters, words, watermark, logo, signature, typography, "
+        "human faces, people, portraits, photorealism, photography, "
+        "messy collage, random clutter, low quality, blurry, artifacts, "
+        "oversharpened, jpeg compression, noisy, deformed, distorted"
     )
 
-    return prompt, negative_prompt
+    print(f"\n✨ Prompt generated with feature-driven logic\n", file=sys.stderr)
+
+    return prompt.strip(), negative_prompt.strip()
 
 
 # Hardcoded YouTube URL for testing
