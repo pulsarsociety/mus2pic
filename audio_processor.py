@@ -1056,30 +1056,78 @@ def analyze_audio(audio_path, duration=None, offset=0.0):
     harmonicity = np.mean(librosa.feature.rms(y=y_harmonic)) / (raw_energy + 1e-6)
     
     # Helper to safely convert numpy values to Python native types
-    def to_native_float(value):
+    def to_native_float(value, name="unknown"):
         """Convert numpy scalar/array to native Python float."""
-        if isinstance(value, np.ndarray):
-            return float(value.item())
-        elif isinstance(value, (np.integer, np.floating)):
-            return float(value)
-        return float(value)
+        try:
+            if isinstance(value, np.ndarray):
+                if value.ndim == 0:
+                    result = float(value.item())
+                    print(f"   DEBUG [{name}]: np.ndarray (0-d) -> {type(result).__name__} = {result}", file=sys.stderr)
+                    return result
+                else:
+                    # Multi-dimensional array - shouldn't happen for scalars
+                    print(f"   DEBUG [{name}]: np.ndarray ({value.ndim}-d) -> converting first element", file=sys.stderr)
+                    return float(value.flat[0])
+            elif isinstance(value, (np.integer, np.floating)):
+                result = float(value)
+                print(f"   DEBUG [{name}]: {type(value).__name__} -> {type(result).__name__} = {result}", file=sys.stderr)
+                return result
+            else:
+                result = float(value)
+                print(f"   DEBUG [{name}]: {type(value).__name__} -> {type(result).__name__} = {result}", file=sys.stderr)
+                return result
+        except Exception as e:
+            print(f"   ERROR [{name}]: Failed to convert {type(value).__name__} = {value}: {e}", file=sys.stderr)
+            return 0.0
     
-    return {
-        'tempo': to_native_float(tempo),
-        'brightness': to_native_float(spectral_centroid),
-        'spectral_centroid': to_native_float(spectral_centroid),
-        'energy': to_native_float(energy_normalized),  # Use normalized energy
-        'raw_energy': to_native_float(raw_energy),     # Keep raw for reference
-        'spectral_rolloff': to_native_float(spectral_rolloff),
-        'spectral_bandwidth': to_native_float(spectral_bandwidth),
-        'spectral_contrast': to_native_float(spectral_contrast),
-        'zcr': to_native_float(zcr),
-        'chroma_std': to_native_float(chroma_std),
-        'rhythm_stability': to_native_float(np.clip(rhythm_stability, 0, 1)),
-        'harmonicity': to_native_float(np.clip(harmonicity, 0, 1)),
+    # Safe helper to convert values to string for debugging
+    def safe_str(value):
+        """Safely convert value to string for debugging."""
+        try:
+            if isinstance(value, np.ndarray):
+                return f"np.ndarray(shape={value.shape}, dtype={value.dtype})"
+            elif isinstance(value, (np.integer, np.floating)):
+                return f"{type(value).__name__}({float(value)})"
+            else:
+                return str(value)
+        except:
+            return f"<unprintable {type(value).__name__}>"
+    
+    print(f"\n🔍 DEBUG: Converting features to native Python types...", file=sys.stderr)
+    print(f"   tempo type: {type(tempo).__name__}, value: {safe_str(tempo)}", file=sys.stderr)
+    print(f"   spectral_centroid type: {type(spectral_centroid).__name__}, value: {safe_str(spectral_centroid)}", file=sys.stderr)
+    print(f"   energy_normalized type: {type(energy_normalized).__name__}, value: {safe_str(energy_normalized)}", file=sys.stderr)
+    print(f"   raw_energy type: {type(raw_energy).__name__}, value: {safe_str(raw_energy)}", file=sys.stderr)
+    print(f"   rhythm_stability type: {type(rhythm_stability).__name__}, value: {safe_str(rhythm_stability)}", file=sys.stderr)
+    print(f"   harmonicity type: {type(harmonicity).__name__}, value: {safe_str(harmonicity)}", file=sys.stderr)
+    print(f"   mfcc_mean type: {type(mfcc_mean).__name__}, shape: {mfcc_mean.shape if isinstance(mfcc_mean, np.ndarray) else 'N/A'}", file=sys.stderr)
+    print(f"   mfcc_std type: {type(mfcc_std).__name__}, shape: {mfcc_std.shape if isinstance(mfcc_std, np.ndarray) else 'N/A'}", file=sys.stderr)
+    
+    result = {
+        'tempo': to_native_float(tempo, 'tempo'),
+        'brightness': to_native_float(spectral_centroid, 'brightness'),
+        'spectral_centroid': to_native_float(spectral_centroid, 'spectral_centroid'),
+        'energy': to_native_float(energy_normalized, 'energy'),  # Use normalized energy
+        'raw_energy': to_native_float(raw_energy, 'raw_energy'),     # Keep raw for reference
+        'spectral_rolloff': to_native_float(spectral_rolloff, 'spectral_rolloff'),
+        'spectral_bandwidth': to_native_float(spectral_bandwidth, 'spectral_bandwidth'),
+        'spectral_contrast': to_native_float(spectral_contrast, 'spectral_contrast'),
+        'zcr': to_native_float(zcr, 'zcr'),
+        'chroma_std': to_native_float(chroma_std, 'chroma_std'),
+        'rhythm_stability': to_native_float(np.clip(rhythm_stability, 0, 1), 'rhythm_stability'),
+        'harmonicity': to_native_float(np.clip(harmonicity, 0, 1), 'harmonicity'),
         'mfcc_mean': mfcc_mean.tolist() if isinstance(mfcc_mean, np.ndarray) else list(mfcc_mean),
         'mfcc_std': mfcc_std.tolist() if isinstance(mfcc_std, np.ndarray) else list(mfcc_std)
     }
+    
+    print(f"✅ DEBUG: All features converted. Checking result types...", file=sys.stderr)
+    for key, value in result.items():
+        if isinstance(value, (list, tuple)):
+            print(f"   {key}: {type(value).__name__} (length {len(value)})", file=sys.stderr)
+        else:
+            print(f"   {key}: {type(value).__name__} = {value}", file=sys.stderr)
+    
+    return result
 
 def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=False):
     tempo = features.get('tempo', 120)
