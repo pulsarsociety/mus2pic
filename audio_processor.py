@@ -997,7 +997,7 @@ def download_audio(youtube_url):
             raise
 
 # 2. Analyze audio
-def analyze_audio(audio_path, duration=None, offset=0.0):
+def analyze_audio(audio_path, duration=None, offset=5.0):
     """
     Enhanced audio analysis with proper scaling and beat detection.
     """
