@@ -201,17 +201,23 @@ def normalize_genre(raw_genres):
     best_genre = max(scores, key=scores.get)
     return best_genre
 
-def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.json"):
+def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.json", skip_swap_detection=False):
     """
     ROBUST multi-fallback Spotify genre lookup.
     Tries multiple search strategies to find the artist.
     Returns raw genres list for refinement.
     Caches locally to save API calls.
     
+    Args:
+        band_name: Artist/band name to search for
+        song_title: Optional song title
+        cache_file: Cache file path
+        skip_swap_detection: If True, skip trying song as artist (use when values are user-verified)
+    
     Fallback strategies:
     1. Direct artist search: "artist:{band_name}"
     2. Track search with both: "track:{song_title} artist:{band_name}"
-    3. Reverse search (in case swap): "track:{band_name} artist:{song_title}"
+    3. Reverse search (in case swap): "track:{band_name} artist:{song_title}" (skipped if skip_swap_detection=True)
     4. Generic track search: "{band_name}"
     5. Combined search: "{band_name} {song_title}"
     6. Cleaned band name (remove common suffixes)
@@ -366,18 +372,22 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
             print(f"✓ Found: {found_artist_name} (score: {score1})", file=sys.stderr)
         
         # === STRATEGY 2: Try extracted "song" as artist (in case of swap) ===
-        if cleaned_song:
+        # Skip this if user has already verified the values (skip_swap_detection=True)
+        if cleaned_song and not skip_swap_detection:
             print(f"🔍 Strategy 2: Trying '{cleaned_song}' as artist (possible swap)", file=sys.stderr)
             match2, score2, name2 = search_artist_with_scoring(cleaned_song)
             if match2:
                 # If song as artist has better score, use it (swap detected)
-                if not artist_id or score2 > score1:
+                # When scores are equal, prefer band match (more reliable)
+                if not artist_id or (score2 > score1):
                     artist_id = match2['id']
                     found_artist_name = name2
                     search_method = f"song as artist - SWAP DETECTED (score: {score2})"
                     print(f"✓ SWAP DETECTED! Found: {found_artist_name} (score: {score2})", file=sys.stderr)
                 else:
                     print(f"  Found '{name2}' but band match was better (score: {score2} vs {score1})", file=sys.stderr)
+        elif skip_swap_detection:
+            print(f"⏭️  Skipping swap detection (user-verified values)", file=sys.stderr)
         
         # === STRATEGY 3: Track + Artist search ===
         if not artist_id and cleaned_song:

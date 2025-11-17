@@ -222,7 +222,9 @@ async def generate_prompt(request: PromptRequest):
                 else:
                     # 2. Try Spotify API (most accurate, with caching)
                     # get_genre_from_spotify returns raw genres list (or None)
-                    raw_genres = get_genre_from_spotify(band_name, song_title)
+                    # Skip swap detection if user provided corrected values
+                    skip_swap = request.band_name is not None and request.song_title is not None
+                    raw_genres = get_genre_from_spotify(band_name, song_title, skip_swap_detection=skip_swap)
                     if raw_genres:
                         genre_source = "spotify"
                     else:
