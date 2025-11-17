@@ -1055,19 +1055,28 @@ def analyze_audio(audio_path, duration=None, offset=0.0):
     y_harmonic, y_percussive = librosa.effects.hpss(y)
     harmonicity = np.mean(librosa.feature.rms(y=y_harmonic)) / (raw_energy + 1e-6)
     
+    # Helper to safely convert numpy values to Python native types
+    def to_native_float(value):
+        """Convert numpy scalar/array to native Python float."""
+        if isinstance(value, np.ndarray):
+            return float(value.item())
+        elif isinstance(value, (np.integer, np.floating)):
+            return float(value)
+        return float(value)
+    
     return {
-        'tempo': float(tempo),
-        'brightness': float(spectral_centroid),
-        'spectral_centroid': float(spectral_centroid),
-        'energy': float(energy_normalized),  # Use normalized energy
-        'raw_energy': float(raw_energy),     # Keep raw for reference
-        'spectral_rolloff': float(spectral_rolloff),
-        'spectral_bandwidth': float(spectral_bandwidth),
-        'spectral_contrast': float(spectral_contrast),
-        'zcr': float(zcr),
-        'chroma_std': float(chroma_std),
-        'rhythm_stability': float(np.clip(rhythm_stability, 0, 1)),
-        'harmonicity': float(np.clip(harmonicity, 0, 1)),
+        'tempo': to_native_float(tempo),
+        'brightness': to_native_float(spectral_centroid),
+        'spectral_centroid': to_native_float(spectral_centroid),
+        'energy': to_native_float(energy_normalized),  # Use normalized energy
+        'raw_energy': to_native_float(raw_energy),     # Keep raw for reference
+        'spectral_rolloff': to_native_float(spectral_rolloff),
+        'spectral_bandwidth': to_native_float(spectral_bandwidth),
+        'spectral_contrast': to_native_float(spectral_contrast),
+        'zcr': to_native_float(zcr),
+        'chroma_std': to_native_float(chroma_std),
+        'rhythm_stability': to_native_float(np.clip(rhythm_stability, 0, 1)),
+        'harmonicity': to_native_float(np.clip(harmonicity, 0, 1)),
         'mfcc_mean': mfcc_mean.tolist() if isinstance(mfcc_mean, np.ndarray) else list(mfcc_mean),
         'mfcc_std': mfcc_std.tolist() if isinstance(mfcc_std, np.ndarray) else list(mfcc_std)
     }

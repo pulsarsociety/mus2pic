@@ -181,36 +181,48 @@ async def extract_metadata(request: PromptRequest):
         # Helper to safely convert numpy types to native Python types
         def to_python(value):
             """Convert numpy types to native Python types for JSON serialization."""
+            if value is None:
+                return None
+            # Handle numpy arrays (including 0-d arrays)
             if isinstance(value, np.ndarray):
+                if value.ndim == 0:
+                    # 0-d array (scalar array) - convert to Python scalar
+                    return value.item()
                 return value.tolist()
+            # Handle numpy scalars
             elif isinstance(value, (np.integer, np.floating)):
-                # Handle numpy scalars (np.int64, np.float64, etc.)
                 return float(value) if isinstance(value, np.floating) else int(value)
+            # Handle lists/tuples recursively
             elif isinstance(value, (list, tuple)):
                 return [to_python(item) for item in value]
+            # Already a native Python type
             return value
         
         # Helper to safely convert scalar values
         def safe_float(key, default=0.0):
             """Safely convert a feature value to float, handling numpy types."""
             val = features.get(key, default)
-            return float(to_python(val))
+            converted = to_python(val)
+            try:
+                return float(converted)
+            except (ValueError, TypeError):
+                return default
         
-        serialized_features = {
-            'tempo': safe_float('tempo', 0),
-            'brightness': safe_float('brightness', 0),
-            'spectral_centroid': safe_float('spectral_centroid', 0),
-            'energy': safe_float('energy', 0),
-            'spectral_rolloff': safe_float('spectral_rolloff', 0),
-            'spectral_bandwidth': safe_float('spectral_bandwidth', 0),
-            'spectral_contrast': safe_float('spectral_contrast', 0),
-            'zcr': safe_float('zcr', 0),
-            'chroma_std': safe_float('chroma_std', 0),
-            'rhythm_stability': safe_float('rhythm_stability', 0),
-            'harmonicity': safe_float('harmonicity', 0),
-            'mfcc_mean': to_python(features.get('mfcc_mean', [])),
-            'mfcc_std': to_python(features.get('mfcc_std', []))
+        # Convert all features - handle all possible keys
+        serialized_features = {}
+        for key in features.keys():
+            serialized_features[key] = to_python(features[key])
+        
+        # Ensure we have all expected keys with defaults
+        expected_keys = {
+            'tempo': 0, 'brightness': 0, 'spectral_centroid': 0, 'energy': 0,
+            'spectral_rolloff': 0, 'spectral_bandwidth': 0, 'spectral_contrast': 0,
+            'zcr': 0, 'chroma_std': 0, 'rhythm_stability': 0, 'harmonicity': 0,
+            'mfcc_mean': [], 'mfcc_std': []
         }
+        for key, default in expected_keys.items():
+            if key not in serialized_features:
+                serialized_features[key] = default
         
         return {
             'success': True,
