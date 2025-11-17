@@ -1068,8 +1068,8 @@ def analyze_audio(audio_path, duration=None, offset=0.0):
         'chroma_std': float(chroma_std),
         'rhythm_stability': float(np.clip(rhythm_stability, 0, 1)),
         'harmonicity': float(np.clip(harmonicity, 0, 1)),
-        'mfcc_mean': mfcc_mean.tolist(),
-        'mfcc_std': mfcc_std.tolist()
+        'mfcc_mean': mfcc_mean.tolist() if isinstance(mfcc_mean, np.ndarray) else list(mfcc_mean),
+        'mfcc_std': mfcc_std.tolist() if isinstance(mfcc_std, np.ndarray) else list(mfcc_std)
     }
 
 def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=False):

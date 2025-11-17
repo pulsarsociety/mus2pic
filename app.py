@@ -176,20 +176,40 @@ async def extract_metadata(request: PromptRequest):
         
         # Convert numpy types to native Python types for JSON serialization
         # Return full features dict so we can reuse it
+        import numpy as np
+        
+        # Helper to safely convert numpy types to native Python types
+        def to_python(value):
+            """Convert numpy types to native Python types for JSON serialization."""
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            elif isinstance(value, (np.integer, np.floating)):
+                # Handle numpy scalars (np.int64, np.float64, etc.)
+                return float(value) if isinstance(value, np.floating) else int(value)
+            elif isinstance(value, (list, tuple)):
+                return [to_python(item) for item in value]
+            return value
+        
+        # Helper to safely convert scalar values
+        def safe_float(key, default=0.0):
+            """Safely convert a feature value to float, handling numpy types."""
+            val = features.get(key, default)
+            return float(to_python(val))
+        
         serialized_features = {
-            'tempo': float(features.get('tempo', 0)),
-            'brightness': float(features.get('brightness', 0)),
-            'spectral_centroid': float(features.get('spectral_centroid', 0)),
-            'energy': float(features.get('energy', 0)),
-            'spectral_rolloff': float(features.get('spectral_rolloff', 0)),
-            'spectral_bandwidth': float(features.get('spectral_bandwidth', 0)),
-            'spectral_contrast': float(features.get('spectral_contrast', 0)),
-            'zcr': float(features.get('zcr', 0)),
-            'chroma_std': float(features.get('chroma_std', 0)),
-            'rhythm_stability': float(features.get('rhythm_stability', 0)),
-            'harmonicity': float(features.get('harmonicity', 0)),
-            'mfcc_mean': features.get('mfcc_mean', []),
-            'mfcc_std': features.get('mfcc_std', [])
+            'tempo': safe_float('tempo', 0),
+            'brightness': safe_float('brightness', 0),
+            'spectral_centroid': safe_float('spectral_centroid', 0),
+            'energy': safe_float('energy', 0),
+            'spectral_rolloff': safe_float('spectral_rolloff', 0),
+            'spectral_bandwidth': safe_float('spectral_bandwidth', 0),
+            'spectral_contrast': safe_float('spectral_contrast', 0),
+            'zcr': safe_float('zcr', 0),
+            'chroma_std': safe_float('chroma_std', 0),
+            'rhythm_stability': safe_float('rhythm_stability', 0),
+            'harmonicity': safe_float('harmonicity', 0),
+            'mfcc_mean': to_python(features.get('mfcc_mean', [])),
+            'mfcc_std': to_python(features.get('mfcc_std', []))
         }
         
         return {
