@@ -241,7 +241,28 @@ async def generate_prompt(request: PromptRequest):
             audio_path = None
             if request.features:
                 # Use pre-extracted features (from metadata extraction step)
-                features = request.features
+                # Normalize features to ensure all values are native Python types
+                import numpy as np
+                def normalize_features(feat_dict):
+                    """Convert all numpy types in features dict to native Python types."""
+                    normalized = {}
+                    for key, value in feat_dict.items():
+                        if isinstance(value, np.ndarray):
+                            normalized[key] = value.tolist()
+                        elif isinstance(value, (np.integer, np.floating)):
+                            normalized[key] = float(value) if isinstance(value, np.floating) else int(value)
+                        elif isinstance(value, (list, tuple)):
+                            normalized[key] = [float(v) if isinstance(v, (np.floating, np.integer)) else v for v in value]
+                        elif isinstance(value, (int, float, str, bool, type(None))):
+                            normalized[key] = value
+                        else:
+                            # Fallback: try to convert to float
+                            try:
+                                normalized[key] = float(value)
+                            except (ValueError, TypeError):
+                                normalized[key] = value
+                    return normalized
+                features = normalize_features(request.features)
                 # No need to download audio again - we already have features
                 if request.band_name and request.song_title:
                     band_name = request.band_name.strip()

@@ -1185,17 +1185,28 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     genre_key = genre_hint.lower()
     has_genre = (genre_hint != "abstract")  # Flag to check if we have real genre
     
-    # Extract features
-    tempo = features.get("tempo", 120)
-    energy = features.get("energy", 0.5)
-    brightness = features.get("spectral_centroid", 3000)
-    rolloff = features.get("spectral_rolloff", 5000)
-    bandwidth = features.get("spectral_bandwidth", 2000)
-    contrast = features.get("spectral_contrast", 20)
-    zcr = features.get("zcr", 0.1)
-    chroma_std = features.get("chroma_std", 0.3)
-    rhythm_stability = features.get("rhythm_stability", 0.5)
-    harmonicity = features.get("harmonicity", 0.5)
+    # Extract features and ensure they're native Python types (not numpy)
+    def safe_float(value, default):
+        """Safely convert value to float, handling numpy types."""
+        if value is None:
+            return default
+        if isinstance(value, (np.integer, np.floating)):
+            return float(value)
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+    
+    tempo = safe_float(features.get("tempo"), 120)
+    energy = safe_float(features.get("energy"), 0.5)
+    brightness = safe_float(features.get("spectral_centroid"), 3000)
+    rolloff = safe_float(features.get("spectral_rolloff"), 5000)
+    bandwidth = safe_float(features.get("spectral_bandwidth"), 2000)
+    contrast = safe_float(features.get("spectral_contrast"), 20)
+    zcr = safe_float(features.get("zcr"), 0.1)
+    chroma_std = safe_float(features.get("chroma_std"), 0.3)
+    rhythm_stability = safe_float(features.get("rhythm_stability"), 0.5)
+    harmonicity = safe_float(features.get("harmonicity"), 0.5)
     
     print(f"\n🎵 Audio Features Extracted:", file=sys.stderr)
     print(f"   Tempo: {tempo:.1f} BPM", file=sys.stderr)
