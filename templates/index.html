@@ -1269,7 +1269,33 @@
                     throw new Error(errorMessage);
                 }
 
-                // Show metadata editing section
+                // Check if band/song is cached - skip verification if cached
+                if (metadataData.is_cached) {
+                    // Skip metadata editing, go straight to prompt generation
+                    console.log('Band/song is cached, skipping verification');
+                    
+                    // Store metadata and features
+                    window.pendingMetadata = {
+                        url: url,
+                        band: metadataData.band,
+                        song: metadataData.song,
+                        features: metadataData.features
+                    };
+                    
+                    // Set the values (for display if needed)
+                    document.getElementById('bandName').value = metadataData.band || '';
+                    document.getElementById('songTitle').value = metadataData.song || '';
+                    
+                    // Don't stop progress - let continuePromptGeneration handle it
+                    // Automatically continue with prompt generation
+                    // Use setTimeout to ensure the function is available
+                    setTimeout(() => {
+                        continuePromptGeneration();
+                    }, 100);
+                    return; // Exit early, continuePromptGeneration will handle the rest
+                }
+                
+                // Show metadata editing section (not cached, needs verification)
                 document.getElementById('bandName').value = metadataData.band || '';
                 document.getElementById('songTitle').value = metadataData.song || '';
                 document.getElementById('metadataSection').style.display = 'block';

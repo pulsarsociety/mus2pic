@@ -159,11 +159,19 @@ async def extract_metadata(request: PromptRequest):
         # Parse duration - None or 0 means full length
         duration = request.duration if request.duration and request.duration > 0 else None
         
+        # Check if band/song is in cache (skip verification if cached)
+        from audio_processor import load_cache, get_cached_entry
+        cache = load_cache()
+        
         # Suppress console output during processing
         f = StringIO()
         with redirect_stdout(f):
             # Download audio and get metadata
             audio_path, band_name, song_title = download_audio(youtube_url)
+            
+            # Check if this band/song combination is in cache
+            cached_entry = get_cached_entry(cache, band_name, song_title)
+            is_cached = cached_entry is not None
             
             # Also extract audio features (we'll need them anyway)
             features = analyze_audio(audio_path, duration=duration)
@@ -263,7 +271,8 @@ async def extract_metadata(request: PromptRequest):
             'success': True,
             'band': band_name,
             'song': song_title,
-            'features': serialized_features
+            'features': serialized_features,
+            'is_cached': is_cached  # Flag to indicate if band/song is in cache
         }
         
     except Exception as e:
