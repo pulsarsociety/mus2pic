@@ -1019,6 +1019,19 @@ def analyze_audio(audio_path, duration=None):
     spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
     energy = np.mean(librosa.feature.rms(y=y))
 
+
+    # DEBUG: Check if audio is too quiet
+    audio_max = np.max(np.abs(y))
+    print(f"   DEBUG - Audio peak: {audio_max:.4f}", file=sys.stderr)
+    print(f"   DEBUG - Raw energy: {energy:.6f}", file=sys.stderr)
+
+    # If audio is very quiet, might need to normalize
+    if audio_max < 0.1:
+        print(f"   ⚠️  Audio seems very quiet, normalizing...", file=sys.stderr)
+        y = y / (audio_max + 1e-6)  # Normalize
+        energy = np.mean(librosa.feature.rms(y=y))
+        print(f"   DEBUG - Normalized energy: {energy:.6f}", file=sys.stderr)
+
     # Spectral rolloff - indicates brightness/darkness (frequency above which 85% of energy is contained)
     spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr, roll_percent=0.85))
 
