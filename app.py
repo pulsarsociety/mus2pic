@@ -28,6 +28,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+import sys
 from audio_processor import download_audio, analyze_audio, audio_to_prompt, audio_to_prompt_v3, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
 from model_options import generate_with_lcm, generate_with_sd14, generate_with_sd21, generate_with_turbo, generate_with_lcm_sd21, generate_with_sdxl_lightning, MODEL_REGISTRY
 
@@ -179,24 +180,39 @@ async def extract_metadata(request: PromptRequest):
         import numpy as np
         
         # Helper to safely convert numpy types to native Python types
-        def to_python(value):
+        def to_python(value, key_name="unknown"):
             """Convert numpy types to native Python types for JSON serialization."""
-            if value is None:
+            try:
+                if value is None:
+                    return None
+                # Handle numpy arrays (including 0-d arrays)
+                if isinstance(value, np.ndarray):
+                    if value.ndim == 0:
+                        # 0-d array (scalar array) - convert to Python scalar
+                        result = value.item()
+                        print(f"   DEBUG [to_python/{key_name}]: np.ndarray (0-d) -> {type(result).__name__}", file=sys.stderr)
+                        return result
+                    else:
+                        # Multi-dimensional array
+                        result = value.tolist()
+                        print(f"   DEBUG [to_python/{key_name}]: np.ndarray ({value.ndim}-d) -> list", file=sys.stderr)
+                        return result
+                # Handle numpy scalars
+                elif isinstance(value, (np.integer, np.floating)):
+                    result = float(value) if isinstance(value, np.floating) else int(value)
+                    print(f"   DEBUG [to_python/{key_name}]: {type(value).__name__} -> {type(result).__name__}", file=sys.stderr)
+                    return result
+                # Handle lists/tuples recursively
+                elif isinstance(value, (list, tuple)):
+                    return [to_python(item, f"{key_name}[{i}]") for i, item in enumerate(value)]
+                # Already a native Python type
+                return value
+            except Exception as e:
+                print(f"   ERROR [to_python/{key_name}]: Failed to convert {type(value).__name__}: {e}", file=sys.stderr)
+                # Return a safe default
+                if isinstance(value, (int, float)):
+                    return float(value) if isinstance(value, float) else int(value)
                 return None
-            # Handle numpy arrays (including 0-d arrays)
-            if isinstance(value, np.ndarray):
-                if value.ndim == 0:
-                    # 0-d array (scalar array) - convert to Python scalar
-                    return value.item()
-                return value.tolist()
-            # Handle numpy scalars
-            elif isinstance(value, (np.integer, np.floating)):
-                return float(value) if isinstance(value, np.floating) else int(value)
-            # Handle lists/tuples recursively
-            elif isinstance(value, (list, tuple)):
-                return [to_python(item) for item in value]
-            # Already a native Python type
-            return value
         
         # Helper to safely convert scalar values
         def safe_float(key, default=0.0):
@@ -209,9 +225,28 @@ async def extract_metadata(request: PromptRequest):
                 return default
         
         # Convert all features - handle all possible keys
+        print(f"🔍 DEBUG [app.py]: Starting feature serialization, {len(features)} keys", file=sys.stderr)
         serialized_features = {}
         for key in features.keys():
-            serialized_features[key] = to_python(features[key])
+            try:
+                # Safe type checking - don't try to format numpy arrays
+                val = features[key]
+                val_type = type(val).__name__
+                if isinstance(val, np.ndarray):
+                    val_str = f"np.ndarray(shape={val.shape})"
+                elif isinstance(val, (np.integer, np.floating)):
+                    val_str = f"{val_type}({float(val)})"
+                else:
+                    val_str = str(val)[:50]  # Limit length
+                print(f"   Processing key: {key}, type: {val_type}, value: {val_str}", file=sys.stderr)
+                serialized_features[key] = to_python(features[key], key)
+                print(f"   ✓ Converted {key}: {type(serialized_features[key]).__name__}", file=sys.stderr)
+            except Exception as e:
+                print(f"   ✗ ERROR converting {key}: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                # Use a safe default
+                serialized_features[key] = 0.0 if key not in ['mfcc_mean', 'mfcc_std'] else []
         
         # Ensure we have all expected keys with defaults
         expected_keys = {
