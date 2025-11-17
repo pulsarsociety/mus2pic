@@ -859,6 +859,30 @@
             <div class="error" id="promptError"></div>
         </div>
 
+        <!-- Step 1.5: Metadata Editing (Optional) -->
+        <div class="section" id="metadataSection" style="display: none;">
+            <div class="section-title">Step 1.5: Verify & Edit Artist/Song Info</div>
+            <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+                <p style="color: #666; margin-bottom: 15px;">
+                    Please verify the extracted artist and song names. Edit them if needed to ensure accurate genre detection.
+                </p>
+                <div class="input-group">
+                    <label for="bandName">Artist/Band Name:</label>
+                    <input type="text" id="bandName" placeholder="Artist name" />
+                </div>
+                <div class="input-group">
+                    <label for="songTitle">Song Title:</label>
+                    <input type="text" id="songTitle" placeholder="Song title" />
+                </div>
+                <button class="button" id="continuePromptBtn" onclick="continuePromptGeneration()">
+                    Continue with Prompt Generation
+                </button>
+                <button class="button" style="background: #6c757d; margin-top: 10px;" onclick="hideMetadataSection()">
+                    Cancel
+                </button>
+            </div>
+        </div>
+
         <!-- Step 2: Generated Prompt (Editable) -->
         <div class="section" id="promptSection" style="display: none;">
             <div class="section-title">Step 2: Edit Your Prompt</div>
@@ -1199,6 +1223,111 @@
             // Reset progress
             progressBar.style.width = '0%';
             progressText.textContent = '0%';
+            statusText.innerHTML = 'Extracting metadata...';
+            
+            // Start progress animation
+            const progressAnim = animatePromptProgress();
+
+            try {
+                // Step 1: Extract metadata first
+                const metadataResponse = await fetch('/api/extract-metadata', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+
+                const metadataText = await metadataResponse.text();
+                let metadataData;
+                try {
+                    metadataData = JSON.parse(metadataText);
+                } catch (e) {
+                    throw new Error(`Server error: ${metadataText || metadataResponse.statusText}`);
+                }
+
+                if (!metadataResponse.ok) {
+                    let errorMessage = 'Failed to extract metadata';
+                    if (metadataData.detail) {
+                        if (Array.isArray(metadataData.detail)) {
+                            errorMessage = metadataData.detail.map(err => {
+                                const field = err.loc ? err.loc.join('.') : 'field';
+                                return `${field}: ${err.msg}`;
+                            }).join(', ');
+                        } else if (typeof metadataData.detail === 'string') {
+                            errorMessage = metadataData.detail;
+                        }
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                // Show metadata editing section
+                document.getElementById('bandName').value = metadataData.band || '';
+                document.getElementById('songTitle').value = metadataData.song || '';
+                document.getElementById('metadataSection').style.display = 'block';
+                document.getElementById('metadataSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                
+                // Store metadata for later use
+                window.pendingMetadata = {
+                    url: url,
+                    band: metadataData.band,
+                    song: metadataData.song
+                };
+
+                // Stop progress animation
+                clearInterval(progressAnim.interval);
+                clearInterval(progressAnim.dotsInterval);
+                progressBar.style.width = '100%';
+                progressText.textContent = '100%';
+                statusText.innerHTML = 'Please verify and edit metadata, then click Continue';
+
+            } catch (error) {
+                clearInterval(progressAnim.interval);
+                clearInterval(progressAnim.dotsInterval);
+                showError('promptError', error.message);
+            } finally {
+                btn.disabled = false;
+                loading.classList.remove('active');
+            }
+        }
+
+        function hideMetadataSection() {
+            document.getElementById('metadataSection').style.display = 'none';
+            window.pendingMetadata = null;
+        }
+
+        async function continuePromptGeneration() {
+            if (!window.pendingMetadata) {
+                showError('promptError', 'No pending metadata. Please start over.');
+                return;
+            }
+
+            const btn = document.getElementById('continuePromptBtn');
+            const loading = document.getElementById('promptLoading');
+            const error = document.getElementById('promptError');
+            const progressBar = document.getElementById('promptProgressBar');
+            const progressText = document.getElementById('promptProgressText');
+            const statusText = document.getElementById('promptStatus');
+
+            btn.disabled = true;
+            loading.classList.add('active');
+            error.classList.remove('show');
+            
+            // Get edited values
+            const editedBand = document.getElementById('bandName').value.trim();
+            const editedSong = document.getElementById('songTitle').value.trim();
+            
+            if (!editedBand || !editedSong) {
+                showError('promptError', 'Please enter both artist and song names');
+                btn.disabled = false;
+                loading.classList.remove('active');
+                return;
+            }
+            
+            // Reset progress
+            progressBar.style.width = '0%';
+            progressText.textContent = '0%';
+            statusText.innerHTML = 'Generating prompt...';
             
             // Start progress animation
             const progressAnim = animatePromptProgress();
@@ -1207,7 +1336,6 @@
                 // Get selected duration
                 const durationSelect = document.getElementById('audioDuration');
                 const duration = parseInt(durationSelect.value) || 0;
-                // 0 means full length, so send null or 0
                 const durationValue = duration > 0 ? duration : null;
                 
                 // Get selected prompt version
@@ -1220,9 +1348,11 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ 
-                        url: url,
+                        url: window.pendingMetadata.url,
                         duration: durationValue,
-                        prompt_version: promptVersion
+                        prompt_version: promptVersion,
+                        band_name: editedBand,
+                        song_title: editedSong
                     })
                 });
 
@@ -1269,6 +1399,10 @@
                 // Small delay to show 100%
                 await new Promise(resolve => setTimeout(resolve, 300));
 
+                // Hide metadata section
+                document.getElementById('metadataSection').style.display = 'none';
+                window.pendingMetadata = null;
+
                 // Show prompt section
                 document.getElementById('promptSection').style.display = 'block';
                 document.getElementById('prompt').value = data.prompt;
@@ -1278,11 +1412,12 @@
                 showGenreInfo(data.genre_hint, data.genre_source);
                 
                 // Save to history
-                saveToHistory(data.prompt, data.negative_prompt, url);
+                const finalUrl = window.pendingMetadata?.url || document.getElementById('youtubeUrl').value.trim();
+                saveToHistory(data.prompt, data.negative_prompt, finalUrl);
 
                 // Store band/song info for later use
-                window.currentBand = data.band || 'Unknown Artist';
-                window.currentSong = data.song || 'Unknown Song';
+                window.currentBand = data.band || editedBand;
+                window.currentSong = data.song || editedSong;
                 window.currentFeatures = data.features || {};
                 window.currentPrompt = data.prompt;
                 window.currentNegativePrompt = data.negative_prompt;

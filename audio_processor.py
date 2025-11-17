@@ -279,21 +279,109 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
         found_artist_name = None
         search_method = None
         
-        # === STRATEGY 1: Direct artist search ===
-        print(f"🔍 Strategy 1: Searching artist '{cleaned_band}'", file=sys.stderr)
-        try:
-            results = sp.search(q=f"artist:{cleaned_band}", type='artist', limit=1)
-            if results['artists']['items']:
-                artist_id = results['artists']['items'][0]['id']
-                found_artist_name = results['artists']['items'][0]['name']
-                search_method = "direct artist search"
-                print(f"✓ Found: {found_artist_name}", file=sys.stderr)
-        except Exception as e:
-            print(f"  Strategy 1 failed: {e}", file=sys.stderr)
+        # Helper function to search and score artist matches
+        def search_artist_with_scoring(search_term):
+            """Search for artist and return best match with score."""
+            try:
+                results = sp.search(q=f"artist:{search_term}", type='artist', limit=10)
+                if not results['artists']['items']:
+                    return None, 0, None
+                
+                best_match = None
+                best_score = 0
+                search_lower = search_term.lower().strip()
+                
+                for artist in results['artists']['items']:
+                    artist_name = artist['name']
+                    artist_lower = artist_name.lower().strip()
+                    
+                    # Calculate match score
+                    score = 0
+                    
+                    # Exact match (case-insensitive) = highest score
+                    if artist_lower == search_lower:
+                        score = 1000
+                    # Single word exact match
+                    elif len(search_lower.split()) == 1 and len(artist_lower.split()) == 1:
+                        if search_lower == artist_lower:
+                            score = 500
+                        else:
+                            score = 0
+                    # Search term is single word, check if it matches artist's first word (preferred)
+                    elif len(search_lower.split()) == 1:
+                        artist_first = artist_lower.split()[0]
+                        artist_last = artist_lower.split()[-1]
+                        if search_lower == artist_first:
+                            score = 400
+                        elif search_lower == artist_last:
+                            score = 20  # Last word match is suspicious
+                        else:
+                            score = 0
+                    # All words match
+                    elif set(search_lower.split()) == set(artist_lower.split()):
+                        score = 800
+                    # Search term is contained in artist name
+                    elif search_lower in artist_lower:
+                        if artist_lower.startswith(search_lower):
+                            score = 200
+                        else:
+                            score = 50
+                    # Artist name is contained in search term
+                    elif artist_lower in search_lower:
+                        score = 300
+                    # Word overlap
+                    else:
+                        search_words = set(search_lower.split())
+                        artist_words = set(artist_lower.split())
+                        overlap = len(search_words & artist_words)
+                        if overlap > 0:
+                            score = overlap * 10
+                    
+                    # Penalize if artist name is much longer
+                    if len(artist_lower) > len(search_lower) * 2:
+                        score = max(0, score - 50)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = artist
+                
+                # Minimum score threshold
+                min_score = 100 if len(search_lower.split()) == 1 else 50
+                
+                if best_match and best_score >= min_score:
+                    return best_match, best_score, best_match['name']
+                else:
+                    return None, best_score, None
+            except Exception as e:
+                print(f"  Search failed for '{search_term}': {e}", file=sys.stderr)
+                return None, 0, None
         
-        # === STRATEGY 2: Track + Artist search ===
+        # === STRATEGY 1: Try extracted "band" as artist ===
+        print(f"🔍 Strategy 1: Trying '{cleaned_band}' as artist", file=sys.stderr)
+        match1, score1, name1 = search_artist_with_scoring(cleaned_band)
+        if match1:
+            artist_id = match1['id']
+            found_artist_name = name1
+            search_method = f"band as artist (score: {score1})"
+            print(f"✓ Found: {found_artist_name} (score: {score1})", file=sys.stderr)
+        
+        # === STRATEGY 2: Try extracted "song" as artist (in case of swap) ===
+        if cleaned_song:
+            print(f"🔍 Strategy 2: Trying '{cleaned_song}' as artist (possible swap)", file=sys.stderr)
+            match2, score2, name2 = search_artist_with_scoring(cleaned_song)
+            if match2:
+                # If song as artist has better score, use it (swap detected)
+                if not artist_id or score2 > score1:
+                    artist_id = match2['id']
+                    found_artist_name = name2
+                    search_method = f"song as artist - SWAP DETECTED (score: {score2})"
+                    print(f"✓ SWAP DETECTED! Found: {found_artist_name} (score: {score2})", file=sys.stderr)
+                else:
+                    print(f"  Found '{name2}' but band match was better (score: {score2} vs {score1})", file=sys.stderr)
+        
+        # === STRATEGY 3: Track + Artist search ===
         if not artist_id and cleaned_song:
-            print(f"🔍 Strategy 2: Searching track '{cleaned_song}' by '{cleaned_band}'", file=sys.stderr)
+            print(f"🔍 Strategy 3: Searching track '{cleaned_song}' by '{cleaned_band}'", file=sys.stderr)
             try:
                 results = sp.search(q=f"track:{cleaned_song} artist:{cleaned_band}", type='track', limit=5)
                 if results['tracks']['items']:
@@ -322,19 +410,6 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
                         found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
                         search_method = "track search (first result)"
                         print(f"⚠️  Using first result: {found_artist_name}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Strategy 2 failed: {e}", file=sys.stderr)
-        
-        # === STRATEGY 3: Reverse search (band/song might be swapped) ===
-        if not artist_id and cleaned_song:
-            print(f"🔍 Strategy 3: Reverse search - trying '{cleaned_song}' as artist", file=sys.stderr)
-            try:
-                results = sp.search(q=f"artist:{cleaned_song}", type='artist', limit=1)
-                if results['artists']['items']:
-                    artist_id = results['artists']['items'][0]['id']
-                    found_artist_name = results['artists']['items'][0]['name']
-                    search_method = "reverse search (swap detected)"
-                    print(f"✓ SWAP DETECTED! Found artist: {found_artist_name}", file=sys.stderr)
             except Exception as e:
                 print(f"  Strategy 3 failed: {e}", file=sys.stderr)
         

@@ -107,6 +107,8 @@ class PromptRequest(BaseModel):
     url: str
     duration: Optional[int] = None  # Duration in seconds. None or 0 means full length
     prompt_version: str = "v3"  # "v1" or "v3" - which prompt generation function to use
+    band_name: Optional[str] = None  # Optional: override extracted band name
+    song_title: Optional[str] = None  # Optional: override extracted song title
 
 class ImageRequest(BaseModel):
     prompt: str
@@ -143,6 +145,37 @@ async def get_models():
         "models": MODEL_REGISTRY
     }
 
+@app.post("/api/extract-metadata")
+async def extract_metadata(request: PromptRequest):
+    """Extract metadata (band/song) from YouTube URL without generating prompt"""
+    try:
+        youtube_url = request.url.strip()
+        
+        if not youtube_url:
+            raise HTTPException(status_code=400, detail="YouTube URL is required")
+        
+        # Suppress console output during processing
+        f = StringIO()
+        with redirect_stdout(f):
+            # Download audio and get metadata
+            audio_path, band_name, song_title = download_audio(youtube_url)
+        
+        # Clean up audio file
+        try:
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+        except:
+            pass
+        
+        return {
+            'success': True,
+            'band': band_name,
+            'song': song_title
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/generate-prompt")
 async def generate_prompt(request: PromptRequest):
     """Generate prompt from YouTube URL"""
@@ -158,8 +191,15 @@ async def generate_prompt(request: PromptRequest):
         # Suppress console output during processing
         f = StringIO()
         with redirect_stdout(f):
-            # Step 1: Download audio and get metadata
-            audio_path, band_name, song_title = download_audio(youtube_url)
+            # Step 1: Download audio and get metadata (or use provided values)
+            if request.band_name and request.song_title:
+                # Use provided band/song, still need to download for analysis
+                audio_path, _, _ = download_audio(youtube_url)
+                band_name = request.band_name.strip()
+                song_title = request.song_title.strip()
+            else:
+                # Extract metadata normally
+                audio_path, band_name, song_title = download_audio(youtube_url)
             
             # Step 2: Analyze audio with specified duration
             features = analyze_audio(audio_path, duration=duration)
