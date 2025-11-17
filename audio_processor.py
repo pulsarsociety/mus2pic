@@ -1016,12 +1016,16 @@ def analyze_audio(audio_path, duration=None, offset=0.0):
         tempo_alt, _ = librosa.beat.beat_track(y=y, sr=sr, tightness=100)
         # If alternative is significantly higher and makes sense, use it
         if tempo_alt > tempo * 1.5 and tempo_alt < 200:
-            print(f"   ⚠️  Tempo correction: {tempo:.1f} → {tempo_alt:.1f} BPM", file=sys.stderr)
+            tempo_float = float(tempo)
+            tempo_alt_float = float(tempo_alt)
+            print(f"   ⚠️  Tempo correction: {tempo_float:.1f} → {tempo_alt_float:.1f} BPM", file=sys.stderr)
             tempo = tempo_alt
         else:
             # Just double it if it seems like half-time
             tempo_doubled = tempo * 2
-            print(f"   ⚠️  Half-time detected, doubling: {tempo:.1f} → {tempo_doubled:.1f} BPM", file=sys.stderr)
+            tempo_float = float(tempo)
+            tempo_doubled_float = float(tempo_doubled)
+            print(f"   ⚠️  Half-time detected, doubling: {tempo_float:.1f} → {tempo_doubled_float:.1f} BPM", file=sys.stderr)
             tempo = tempo_doubled
     
     # === ENERGY - Normalize RMS to 0-1 scale ===
@@ -1032,7 +1036,10 @@ def analyze_audio(audio_path, duration=None, offset=0.0):
     # Normalize to 0-1 scale for easier thresholding
     energy_normalized = np.clip((raw_energy - 0.01) / 0.29, 0, 1)
     
-    print(f"   DEBUG - Raw RMS: {raw_energy:.4f} → Normalized: {energy_normalized:.3f}", file=sys.stderr)
+    # Convert to native Python types before formatting
+    raw_energy_float = float(raw_energy) if isinstance(raw_energy, (np.integer, np.floating, np.ndarray)) else float(raw_energy)
+    energy_norm_float = float(energy_normalized) if isinstance(energy_normalized, (np.integer, np.floating, np.ndarray)) else float(energy_normalized)
+    print(f"   DEBUG - Raw RMS: {raw_energy_float:.4f} → Normalized: {energy_norm_float:.3f}", file=sys.stderr)
     
     # === REST OF FEATURES ===
     spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
@@ -1265,44 +1272,61 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     rhythm_stability = safe_float(features.get("rhythm_stability"), 0.5)
     harmonicity = safe_float(features.get("harmonicity"), 0.5)
     
-    print(f"\n🎵 Audio Features Extracted:", file=sys.stderr)
-    print(f"   Tempo: {tempo:.1f} BPM", file=sys.stderr)
-    print(f"   Energy: {energy:.3f}", file=sys.stderr)
-    print(f"   Brightness: {brightness:.1f} Hz", file=sys.stderr)
-    print(f"   Harmonicity: {harmonicity:.3f}", file=sys.stderr)
-    print(f"   Rhythm Stability: {rhythm_stability:.3f}", file=sys.stderr)
+    # Values are already converted by safe_float, but ensure they're native types for formatting
+    tempo_safe = float(tempo)
+    energy_safe = float(energy)
+    brightness_safe = float(brightness)
+    harmonicity_safe = float(harmonicity)
+    rhythm_stability_safe = float(rhythm_stability)
     
-    # MOOD (single powerful phrase)
-    if chroma_std < 0.2 and energy > 0.6:
+    print(f"\n🎵 Audio Features Extracted:", file=sys.stderr)
+    print(f"   Tempo: {tempo_safe:.1f} BPM", file=sys.stderr)
+    print(f"   Energy: {energy_safe:.3f}", file=sys.stderr)
+    print(f"   Brightness: {brightness_safe:.1f} Hz", file=sys.stderr)
+    print(f"   Harmonicity: {harmonicity_safe:.3f}", file=sys.stderr)
+    print(f"   Rhythm Stability: {rhythm_stability_safe:.3f}", file=sys.stderr)
+    
+    # === MOOD - ADJUSTED THRESHOLDS ===
+    # Consider genre context for mood
+    is_metal = "metal" in genre_key
+    is_aggressive_genre = any(x in genre_key for x in ["metal", "punk", "hardcore", "thrash"])
+    
+    if chroma_std < 0.2 and energy > 0.55:  # Lowered from 0.6
         mood = "aggressive intensity"
+    elif energy > 0.55 and tempo > 140 and is_aggressive_genre:  # NEW: genre-aware aggression
+        mood = "explosive power"
     elif chroma_std > 0.4 and harmonicity > 0.6:
-        mood = "emotional depth"
+        mood = "complex emotional depth"
     elif harmonicity < 0.3 and zcr > 0.15:
         mood = "chaotic energy"
     elif chroma_std > 0.5 and energy < 0.4:
         mood = "melancholic"
     elif energy < 0.25:
         mood = "meditative calm"
-    elif harmonicity > 0.7 and energy > 0.5:
-        mood = "euphoric"
+    elif harmonicity > 0.65 and energy > 0.45:  # Lowered from 0.7 and 0.5
+        mood = "euphoric power"
     else:
         mood = "introspective"
     
-    # LIGHTING (concise)
+    # === LIGHTING - ADJUSTED ===
     if rolloff > 7000 and brightness > 4000:
         lighting = "sharp bright contrast"
     elif rolloff < 3000 and brightness < 2000:
         lighting = "deep shadows"
     elif contrast > 25:
         lighting = "dramatic chiaroscuro"
+    elif energy > 0.6:  # NEW: high energy = dramatic lighting
+        lighting = "bold dramatic lighting"
     else:
         lighting = "cinematic glow"
     
-    # MOTION (short)
-    if tempo > 160 and rhythm_stability < 0.5:
+    # === MOTION - ADJUSTED ===
+    if tempo > 150 and rhythm_stability < 0.5:  # Lowered from 160
         motion = "explosive chaos"
-    elif tempo > 160:
+    elif tempo > 150 and rhythm_stability > 0.6:  # Lowered from 160
         motion = "relentless drive"
+    elif tempo > 130 and energy > 0.5:  # NEW: fast + energetic
+        motion = "aggressive rhythmic force"
     elif tempo < 80:
         motion = "glacial weight"
     elif rhythm_stability < 0.4:
@@ -1310,21 +1334,25 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     else:
         motion = "rhythmic pulse"
     
-    # COMPOSITION (minimal)
+    # === COMPOSITION - ADJUSTED ===
     if energy < 0.25:
         composition = "minimal centered"
-    elif energy > 0.7:
+    elif energy > 0.55 and tempo > 140:  # Lowered from 0.7, NEW tempo check
         composition = "explosive asymmetric"
+    elif energy > 0.5:  # NEW: medium-high energy
+        composition = "dynamic bold arrangement"
     else:
         composition = "balanced depth"
     
-    # COLORS (short)
-    if energy > 0.7 and brightness > 4000:
+    # === COLORS - ADJUSTED ===
+    if energy > 0.65 and brightness > 4000:
         colors = "neon electric"
+    elif energy > 0.55 and is_metal:  # NEW: metal gets bold colors
+        colors = "bold saturated"
     elif brightness < 2000 and energy < 0.4:
         colors = "dark muted"
     elif harmonicity > 0.65:
-        colors = "warm harmonious"
+        colors = "rich harmonious"
     else:
         colors = "atmospheric gradient"
     
@@ -1461,20 +1489,14 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     else:
         print(f"   No genre found - using feature-driven description: {flavor}", file=sys.stderr)
     
-    # ==========================================
-    # PROMPT STRUCTURE: Different for abstract vs genre-known
-    # ==========================================
-    
+    # === PROMPT STRUCTURE ===
     if has_genre:
-        # Has genre: use genre-based structure
         prompt = (
             f"abstract {genre_hint} music poster, {flavor}, {mood} mood, "
             f"{lighting}, {motion}, {colors} colors, {composition}, "
             f"geometric symbolic forms, volumetric depth, no text, no faces, 4K, HIGH QUALITY"
         )
     else:
-        # No genre: use purely descriptive structure based on audio features
-        # Replace "abstract abstract" with more descriptive terms
         prompt = (
             f"music poster art, {flavor}, {mood} mood, "
             f"{lighting}, {motion}, {colors} colors, {composition}, "
