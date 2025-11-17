@@ -2,9 +2,15 @@
 FastAPI web application for mus2pic - Lightweight and fast!
 """
 import os
-# Set HF_HOME before loading any other modules that might use it
-os.environ["HF_HOME"] = "/data/.hf_home"
-os.makedirs("/data/.hf_home", exist_ok=True)
+# Set ALL Hugging Face cache environment variables before loading any other modules
+# This ensures downloads go to a single location
+base_dir = "/data/.hf_home"
+hub_cache_dir = os.path.join(base_dir, "hub")
+os.makedirs(base_dir, exist_ok=True)
+os.makedirs(hub_cache_dir, exist_ok=True)
+os.environ["HF_HOME"] = base_dir
+os.environ["HF_HUB_CACHE"] = hub_cache_dir  # Explicitly set hub cache location
+os.environ["HUGGINGFACE_HUB_CACHE"] = hub_cache_dir  # Compatibility for older versions
 
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file

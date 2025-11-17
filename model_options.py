@@ -55,14 +55,31 @@ except ImportError:
 # Configure Hugging Face cache directory to /data/.hf_home/hub/
 # This must be set before any diffusers imports are used
 def _configure_hf_cache():
-    """Configure HF_HOME environment variable - force to /data/.hf_home"""
+    """
+    Configure ALL Hugging Face cache environment variables to ensure single cache location.
+    Sets both HF_HOME and HF_HUB_CACHE to prevent downloads to multiple folders.
+    """
     # Force set to /data/.hf_home (override any existing value, especially /workspace)
     base_dir = "/data/.hf_home"
+    hub_cache_dir = os.path.join(base_dir, "hub")
+    
+    # Create directories
     os.makedirs(base_dir, exist_ok=True)
+    os.makedirs(hub_cache_dir, exist_ok=True)
+    
+    # Set both environment variables to ensure single cache location
     os.environ["HF_HOME"] = base_dir
-    print(f"📦 Configured Hugging Face cache to: {base_dir} (overriding any previous setting)")
+    os.environ["HF_HUB_CACHE"] = hub_cache_dir  # Explicitly set hub cache location
+    
+    # Also set HUGGINGFACE_HUB_CACHE for compatibility (older versions)
+    os.environ["HUGGINGFACE_HUB_CACHE"] = hub_cache_dir
+    
+    print(f"📦 Configured Hugging Face cache:")
+    print(f"   HF_HOME: {base_dir}")
+    print(f"   HF_HUB_CACHE: {hub_cache_dir}")
+    print(f"   (All downloads will go to: {hub_cache_dir})")
 
-# Configure cache directory on module import
+# Configure cache directory on module import (BEFORE any huggingface imports)
 _configure_hf_cache()
 
 # Global model cache with thread safety (separate caches for each model)
@@ -1178,13 +1195,30 @@ def print_model_comparison():
 
 
 def get_huggingface_cache_dir():
-    """Get the Hugging Face cache directory"""
-    # Check for explicit HF_HOME environment variable (highest priority)
-    cache_dir = os.getenv("HF_HOME")
+    """
+    Get the Hugging Face cache directory.
+    Returns the hub cache directory, ensuring consistency with environment variables.
+    """
+    # Priority 1: Check HF_HUB_CACHE (most specific, explicitly set by us)
+    cache_dir = os.getenv("HF_HUB_CACHE")
     if cache_dir:
-        return os.path.join(cache_dir, "hub")
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
     
-    # Default to /data/.hf_home/hub/
+    # Priority 2: Check HUGGINGFACE_HUB_CACHE (compatibility)
+    cache_dir = os.getenv("HUGGINGFACE_HUB_CACHE")
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+    
+    # Priority 3: Check HF_HOME and append /hub
+    hf_home = os.getenv("HF_HOME")
+    if hf_home:
+        cache_path = os.path.join(hf_home, "hub")
+        os.makedirs(cache_path, exist_ok=True)
+        return cache_path
+    
+    # Default to /data/.hf_home/hub/ (should never reach here if _configure_hf_cache() ran)
     cache_path = "/data/.hf_home/hub"
     os.makedirs(cache_path, exist_ok=True)
     return cache_path
