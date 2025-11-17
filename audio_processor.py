@@ -997,75 +997,70 @@ def download_audio(youtube_url):
             raise
 
 # 2. Analyze audio
-def analyze_audio(audio_path, duration=None):
+def analyze_audio(audio_path, duration=None, offset=0.0):
     """
-    Enhanced audio analysis extracting multiple features for better prompt generation.
-
-    Args:
-        audio_path: Path to the audio file
-        duration: Duration in seconds to analyze. None means full length.
-
-    Returns:
-        Dictionary with comprehensive audio features
+    Enhanced audio analysis with proper scaling and beat detection.
     """
-    # Load audio - if duration is None, load full length
+    # Load audio with offset
     if duration is None:
-        y, sr = librosa.load(audio_path)  # Full length
+        y, sr = librosa.load(audio_path, offset=offset)
     else:
-        y, sr = librosa.load(audio_path, duration=duration)  # Specific duration
-
-    # Basic features
+        y, sr = librosa.load(audio_path, offset=offset, duration=duration)
+    
+    # === TEMPO - Try to detect correct BPM (avoid half-time detection) ===
     tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+    
+    # Check for half-time detection - if tempo is very low, try doubling
+    if tempo < 100:
+        # Also try with tightness parameter for better detection
+        tempo_alt, _ = librosa.beat.beat_track(y=y, sr=sr, tightness=100)
+        # If alternative is significantly higher and makes sense, use it
+        if tempo_alt > tempo * 1.5 and tempo_alt < 200:
+            print(f"   ⚠️  Tempo correction: {tempo:.1f} → {tempo_alt:.1f} BPM", file=sys.stderr)
+            tempo = tempo_alt
+        else:
+            # Just double it if it seems like half-time
+            tempo_doubled = tempo * 2
+            print(f"   ⚠️  Half-time detected, doubling: {tempo:.1f} → {tempo_doubled:.1f} BPM", file=sys.stderr)
+            tempo = tempo_doubled
+    
+    # === ENERGY - Normalize RMS to 0-1 scale ===
+    rms = librosa.feature.rms(y=y)[0]
+    raw_energy = np.mean(rms)
+    
+    # RMS typically ranges 0.01 (quiet) to 0.35 (loud/compressed)
+    # Normalize to 0-1 scale for easier thresholding
+    energy_normalized = np.clip((raw_energy - 0.01) / 0.29, 0, 1)
+    
+    print(f"   DEBUG - Raw RMS: {raw_energy:.4f} → Normalized: {energy_normalized:.3f}", file=sys.stderr)
+    
+    # === REST OF FEATURES ===
     spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-    energy = np.mean(librosa.feature.rms(y=y))
-
-
-    # DEBUG: Check if audio is too quiet
-    audio_max = np.max(np.abs(y))
-    print(f"   DEBUG - Audio peak: {audio_max:.4f}", file=sys.stderr)
-    print(f"   DEBUG - Raw energy: {energy:.6f}", file=sys.stderr)
-
-    # If audio is very quiet, might need to normalize
-    if audio_max < 0.1:
-        print(f"   ⚠️  Audio seems very quiet, normalizing...", file=sys.stderr)
-        y = y / (audio_max + 1e-6)  # Normalize
-        energy = np.mean(librosa.feature.rms(y=y))
-        print(f"   DEBUG - Normalized energy: {energy:.6f}", file=sys.stderr)
-
-    # Spectral rolloff - indicates brightness/darkness (frequency above which 85% of energy is contained)
     spectral_rolloff = np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr, roll_percent=0.85))
-
-    # Zero crossing rate - indicates percussiveness/noise content
+    spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr))
+    spectral_contrast = np.mean(librosa.feature.spectral_contrast(y=y, sr=sr))
+    
     zcr = np.mean(librosa.feature.zero_crossing_rate(y))
-
-    # Chroma - harmonic content (captures tonal complexity)
+    
     chroma = librosa.feature.chroma_stft(y=y, sr=sr)
-    chroma_std = np.std(chroma)  # Harmonic complexity/variation
-
-    # MFCC - timbre characteristics (texture of sound)
+    chroma_std = np.std(chroma)
+    
     mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
     mfcc_mean = np.mean(mfccs, axis=1)
     mfcc_std = np.std(mfccs, axis=1)
-
-    # Rhythm stability (beat consistency)
+    
     onset_env = librosa.onset.onset_strength(y=y, sr=sr)
     rhythm_stability = 1.0 - np.clip(np.std(onset_env) / (np.mean(onset_env) + 1e-6), 0, 1)
-
-    # Harmonic vs percussive separation
+    
     y_harmonic, y_percussive = librosa.effects.hpss(y)
-    harmonicity = np.mean(librosa.feature.rms(y=y_harmonic)) / (energy + 1e-6)
-
-    # Spectral bandwidth - indicates "purity" vs "noisiness"
-    spectral_bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr))
-
-    # Spectral contrast - indicates dynamic range and texture
-    spectral_contrast = np.mean(librosa.feature.spectral_contrast(y=y, sr=sr))
-
+    harmonicity = np.mean(librosa.feature.rms(y=y_harmonic)) / (raw_energy + 1e-6)
+    
     return {
         'tempo': float(tempo),
         'brightness': float(spectral_centroid),
         'spectral_centroid': float(spectral_centroid),
-        'energy': float(energy),
+        'energy': float(energy_normalized),  # Use normalized energy
+        'raw_energy': float(raw_energy),     # Keep raw for reference
         'spectral_rolloff': float(spectral_rolloff),
         'spectral_bandwidth': float(spectral_bandwidth),
         'spectral_contrast': float(spectral_contrast),
