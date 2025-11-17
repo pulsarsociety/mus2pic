@@ -1229,13 +1229,21 @@
             const progressAnim = animatePromptProgress();
 
             try {
+                // Get selected duration for metadata extraction
+                const durationSelect = document.getElementById('audioDuration');
+                const duration = parseInt(durationSelect.value) || 0;
+                const durationValue = duration > 0 ? duration : null;
+                
                 // Step 1: Extract metadata first
                 const metadataResponse = await fetch('/api/extract-metadata', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ url: url })
+                    body: JSON.stringify({ 
+                        url: url,
+                        duration: durationValue
+                    })
                 });
 
                 const metadataText = await metadataResponse.text();
