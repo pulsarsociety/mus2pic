@@ -1267,11 +1267,12 @@
                 document.getElementById('metadataSection').style.display = 'block';
                 document.getElementById('metadataSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 
-                // Store metadata for later use
+                // Store metadata and features for later use
                 window.pendingMetadata = {
                     url: url,
                     band: metadataData.band,
-                    song: metadataData.song
+                    song: metadataData.song,
+                    features: metadataData.features  // Store pre-extracted features
                 };
 
                 // Stop progress animation
@@ -1352,7 +1353,8 @@
                         duration: durationValue,
                         prompt_version: promptVersion,
                         band_name: editedBand,
-                        song_title: editedSong
+                        song_title: editedSong,
+                        features: window.pendingMetadata.features  // Pass pre-extracted features
                     })
                 });
 

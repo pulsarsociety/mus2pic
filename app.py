@@ -109,6 +109,7 @@ class PromptRequest(BaseModel):
     prompt_version: str = "v3"  # "v1" or "v3" - which prompt generation function to use
     band_name: Optional[str] = None  # Optional: override extracted band name
     song_title: Optional[str] = None  # Optional: override extracted song title
+    features: Optional[dict] = None  # Optional: pre-extracted audio features (to avoid re-processing)
 
 class ImageRequest(BaseModel):
     prompt: str
@@ -147,18 +148,24 @@ async def get_models():
 
 @app.post("/api/extract-metadata")
 async def extract_metadata(request: PromptRequest):
-    """Extract metadata (band/song) from YouTube URL without generating prompt"""
+    """Extract metadata (band/song) and audio features from YouTube URL without generating prompt"""
     try:
         youtube_url = request.url.strip()
         
         if not youtube_url:
             raise HTTPException(status_code=400, detail="YouTube URL is required")
         
+        # Parse duration - None or 0 means full length
+        duration = request.duration if request.duration and request.duration > 0 else None
+        
         # Suppress console output during processing
         f = StringIO()
         with redirect_stdout(f):
             # Download audio and get metadata
             audio_path, band_name, song_title = download_audio(youtube_url)
+            
+            # Also extract audio features (we'll need them anyway)
+            features = analyze_audio(audio_path, duration=duration)
         
         # Clean up audio file
         try:
@@ -167,10 +174,29 @@ async def extract_metadata(request: PromptRequest):
         except:
             pass
         
+        # Convert numpy types to native Python types for JSON serialization
+        # Return full features dict so we can reuse it
+        serialized_features = {
+            'tempo': float(features.get('tempo', 0)),
+            'brightness': float(features.get('brightness', 0)),
+            'spectral_centroid': float(features.get('spectral_centroid', 0)),
+            'energy': float(features.get('energy', 0)),
+            'spectral_rolloff': float(features.get('spectral_rolloff', 0)),
+            'spectral_bandwidth': float(features.get('spectral_bandwidth', 0)),
+            'spectral_contrast': float(features.get('spectral_contrast', 0)),
+            'zcr': float(features.get('zcr', 0)),
+            'chroma_std': float(features.get('chroma_std', 0)),
+            'rhythm_stability': float(features.get('rhythm_stability', 0)),
+            'harmonicity': float(features.get('harmonicity', 0)),
+            'mfcc_mean': features.get('mfcc_mean', []),
+            'mfcc_std': features.get('mfcc_std', [])
+        }
+        
         return {
             'success': True,
             'band': band_name,
-            'song': song_title
+            'song': song_title,
+            'features': serialized_features
         }
         
     except Exception as e:
@@ -191,18 +217,34 @@ async def generate_prompt(request: PromptRequest):
         # Suppress console output during processing
         f = StringIO()
         with redirect_stdout(f):
-            # Step 1: Download audio and get metadata (or use provided values)
-            if request.band_name and request.song_title:
-                # Use provided band/song, still need to download for analysis
-                audio_path, _, _ = download_audio(youtube_url)
-                band_name = request.band_name.strip()
-                song_title = request.song_title.strip()
+            # Step 1: Use provided features if available (from metadata extraction), otherwise extract
+            audio_path = None
+            if request.features:
+                # Use pre-extracted features (from metadata extraction step)
+                features = request.features
+                # No need to download audio again - we already have features
+                if request.band_name and request.song_title:
+                    band_name = request.band_name.strip()
+                    song_title = request.song_title.strip()
+                else:
+                    # Still need metadata if not provided, but we can skip audio download
+                    # Just get metadata from a minimal download (or skip if we have band/song)
+                    pass  # We already have band/song from metadata extraction
+                    band_name = None
+                    song_title = None
             else:
-                # Extract metadata normally
-                audio_path, band_name, song_title = download_audio(youtube_url)
-            
-            # Step 2: Analyze audio with specified duration
-            features = analyze_audio(audio_path, duration=duration)
+                # Extract metadata and features normally
+                if request.band_name and request.song_title:
+                    # Use provided band/song, still need to download for analysis
+                    audio_path, _, _ = download_audio(youtube_url)
+                    band_name = request.band_name.strip()
+                    song_title = request.song_title.strip()
+                else:
+                    # Extract metadata normally
+                    audio_path, band_name, song_title = download_audio(youtube_url)
+                
+                # Step 2: Analyze audio with specified duration
+                features = analyze_audio(audio_path, duration=duration)
             
             # Step 3: Generate prompt (v1 or v3)
             genre_hint = None
@@ -214,7 +256,10 @@ async def generate_prompt(request: PromptRequest):
                 genre_source = None
                 
                 # 1. Try metadata first (fastest, if available)
-                metadata_genre = get_genre_from_metadata(audio_path)
+                # Only try metadata if we have audio_path (not when using pre-extracted features)
+                metadata_genre = None
+                if audio_path and os.path.exists(audio_path):
+                    metadata_genre = get_genre_from_metadata(audio_path)
                 if metadata_genre:
                     # Convert string to list for normalize_genre
                     raw_genres = [metadata_genre]
@@ -253,12 +298,13 @@ async def generate_prompt(request: PromptRequest):
                 refined_genre = None
                 prompt, negative_prompt = audio_to_prompt(features, band_name=band_name, song_title=song_title)
         
-        # Clean up audio file
-        try:
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
-        except:
-            pass
+        # Clean up audio file (only if we downloaded it)
+        if audio_path:
+            try:
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+            except:
+                pass
         
         # Convert numpy types to native Python types for JSON serialization
         return {
