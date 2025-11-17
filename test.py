@@ -203,10 +203,15 @@ def normalize_genre(raw_genres):
 
 def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.json"):
     """
-    Attempts to get genre from Spotify API using only band/artist name.
+    Attempts to get genre from Spotify API using band/artist name with multiple fallback strategies.
     Returns raw genres list for refinement.
     Falls back to None if not found.
     Caches locally to save API calls.
+    
+    Fallback strategies:
+    1. Search by band_name as artist
+    2. If song_title provided, try searching track and extract artist
+    3. Try band_name as track search (in case band/song were swapped)
     """
     if not SPOTIPY_AVAILABLE:
         return None
@@ -248,31 +253,64 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
     try:
         sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
             client_id=client_id, client_secret=client_secret))
-        # Search for artist directly (not track)
+        
+        artist_id = None
+        search_attempts = []
+        
+        # Strategy 1: Search for artist directly by band_name
+        print(f"🔍 Searching Spotify for artist: '{band_name}'", file=sys.stderr)
         results = sp.search(q=f"artist:{band_name}", type='artist', limit=1)
-        if not results['artists']['items']:
-            # Fallback: try track search and get artist from first result
-            results = sp.search(q=band_name, type='track', limit=1)
-            if not results['tracks']['items']:
-                cache[key] = "abstract"
-                with open(cache_file, "w") as f:
-                    json.dump(cache, f)
-                print(f"⚠️  No artist found on Spotify for '{band_name}'", file=sys.stderr)
-                return None
-            artist_id = results['tracks']['items'][0]['artists'][0]['id']
-        else:
+        if results['artists']['items']:
             artist_id = results['artists']['items'][0]['id']
+            search_attempts.append(f"artist:{band_name} (direct)")
+        else:
+            # Strategy 2: If song_title provided, try searching track and extract artist
+            if song_title:
+                print(f"🔍 Fallback: Searching track '{song_title}' by '{band_name}'", file=sys.stderr)
+                track_query = f"track:{song_title} artist:{band_name}"
+                results = sp.search(q=track_query, type='track', limit=1)
+                if results['tracks']['items']:
+                    artist_id = results['tracks']['items'][0]['artists'][0]['id']
+                    found_artist = results['tracks']['items'][0]['artists'][0]['name']
+                    search_attempts.append(f"track:{song_title} artist:{band_name} (found: {found_artist})")
+                else:
+                    # Strategy 3: Try band_name as track (in case band/song were swapped)
+                    print(f"🔍 Fallback: Trying '{band_name}' as track name (possible swap)", file=sys.stderr)
+                    results = sp.search(q=f"track:{band_name}", type='track', limit=1)
+                    if results['tracks']['items']:
+                        artist_id = results['tracks']['items'][0]['artists'][0]['id']
+                        found_artist = results['tracks']['items'][0]['artists'][0]['name']
+                        search_attempts.append(f"track:{band_name} (found artist: {found_artist})")
+                        print(f"⚠️  Possible band/song swap detected! Found artist '{found_artist}' when searching for track '{band_name}'", file=sys.stderr)
+            
+            # Strategy 4: Generic track search with band_name (last resort)
+            if not artist_id:
+                print(f"🔍 Fallback: Generic search for '{band_name}'", file=sys.stderr)
+                results = sp.search(q=band_name, type='track', limit=1)
+                if results['tracks']['items']:
+                    artist_id = results['tracks']['items'][0]['artists'][0]['id']
+                    found_artist = results['tracks']['items'][0]['artists'][0]['name']
+                    search_attempts.append(f"generic:{band_name} (found: {found_artist})")
+        
+        if not artist_id:
+            cache[key] = "abstract"
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            print(f"⚠️  No artist found on Spotify for '{band_name}' (tried: {', '.join(search_attempts) if search_attempts else 'direct search'})", file=sys.stderr)
+            return None
         
         artist = sp.artist(artist_id)
         raw_genres = artist.get('genres', [])
+        found_artist_name = artist.get('name', 'Unknown')
         
         # Print raw genres from Spotify to stderr (not suppressed by redirect_stdout)
         if raw_genres:
-            print(f"🎵 Spotify raw genres for '{band_name}': {raw_genres}", file=sys.stderr)
+            print(f"🎵 Spotify raw genres for '{found_artist_name}' (searched as '{band_name}'): {raw_genres}", file=sys.stderr)
         else:
-            print(f"⚠️  No genres found on Spotify for '{band_name}'", file=sys.stderr)
+            print(f"⚠️  No genres found on Spotify for '{found_artist_name}' (searched as '{band_name}')", file=sys.stderr)
         
-        # Cache raw genres (list)
+        # Cache raw genres (list) - cache under the searched name, not found name
+        # This way if we search for the same wrong name again, we get the cached result
         if raw_genres:
             cache[key] = raw_genres
         else:
@@ -419,20 +457,28 @@ def download_audio(youtube_url):
                 song = parts[0].strip()
                 band = parts[1].strip()
             
-            # Pattern 3: "Song (Band)" or "Song [Band]" - but skip if it's just quality indicators
+            # Pattern 3: "Song (Band)" or "Song [Band]" - but skip if it's just quality indicators or venues
             elif not band and ' (' in title and title.endswith(')'):
-                # Check if the content in parentheses looks like a quality indicator, not a band name
+                # Check if the content in parentheses looks like a quality indicator, venue, or band name
                 idx = title.rfind(' (')
                 paren_content = title[idx+2:-1].strip().lower()
                 # Skip if it's a quality indicator (HD, 4K, live, official, etc.)
                 quality_indicators = ['hd', '4k', '8k', 'live', 'official', 'lyrics', 'video', 'audio', 'hq', 'remastered', 'remaster']
-                if paren_content not in quality_indicators and len(paren_content) > 2:
+                # Skip if it's a venue/location indicator
+                venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording', 'from']
+                is_venue = any(venue in paren_content for venue in venue_indicators)
+                if paren_content not in quality_indicators and not is_venue and len(paren_content) > 2:
                     song = title[:idx].strip()
                     band = title[idx+2:-1].strip()
             elif not band and ' [' in title and title.endswith(']'):
                 idx = title.rfind(' [')
-                song = title[:idx].strip()
-                band = title[idx+2:-1].strip()
+                bracket_content = title[idx+2:-1].strip().lower()
+                # Check if bracket content is a venue/location
+                venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording', 'from']
+                is_venue = any(venue in bracket_content for venue in venue_indicators)
+                if not is_venue:
+                    song = title[:idx].strip()
+                    band = title[idx+2:-1].strip()
             
             # Pattern 4: "Band: Song"
             elif not band and ':' in title and title.count(':') == 1:
@@ -502,7 +548,10 @@ def download_audio(youtube_url):
             band = re.sub(r'\s*VEVO$', '', band, flags=re.IGNORECASE)
             band = re.sub(r'\s*Official.*$', '', band, flags=re.IGNORECASE)
             band = re.sub(r'\s*\[.*?\]$', '', band)  # Remove [Official Video] etc
-            band = re.sub(r'\s*\(.*?\)$', '', band)  # Remove (Official Audio) etc
+            # Remove parentheses content if it looks like a venue/location
+            venue_pattern = r'\s*\([^)]*(?:live\s+at|at\s+|venue|concert|festival|session|studio|recording|from)[^)]*\)'
+            band = re.sub(venue_pattern, '', band, flags=re.IGNORECASE)
+            band = re.sub(r'\s*\(.*?\)$', '', band)  # Remove remaining (Official Audio) etc
             band = re.sub(r'^[「『]|[''」』]$', '', band)  # Remove Japanese brackets if still present
             band = band.strip()
             
@@ -514,6 +563,22 @@ def download_audio(youtube_url):
             song = re.sub(r'\s*\(HD\)$', '', song, flags=re.IGNORECASE)  # Remove (HD) suffix
             song = re.sub(r'^[「『]|[''」』]$', '', song)  # Remove Japanese brackets if still present
             song = song.strip()
+            
+            # Detect potential issues with extracted metadata
+            # Check if band name looks like a song title or venue name
+            venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']
+            if any(indicator in band.lower() for indicator in venue_indicators):
+                print(f"⚠️  Warning: Band name '{band}' looks like a venue/location. May need manual correction.", file=sys.stderr)
+            
+            # Check if band name looks like a song title (long, descriptive phrases)
+            if len(band.split()) > 4 and len(band) > 30:
+                print(f"⚠️  Warning: Band name '{band}' is unusually long. Possible band/song swap?", file=sys.stderr)
+            
+            # Check if song name is very short (could be band name)
+            if len(song.split()) <= 1 and len(song) < 10:
+                print(f"⚠️  Warning: Song name '{song}' is very short. Possible band/song swap?", file=sys.stderr)
+            
+            print(f"📋 Extracted metadata: Band='{band}', Song='{song}'", file=sys.stderr)
             
             return audio_path, band, song
     except Exception as e:
@@ -617,6 +682,9 @@ def download_audio(youtube_url):
                 band = re.sub(r'\s*VEVO$', '', band, flags=re.IGNORECASE)
                 band = re.sub(r'\s*Official.*$', '', band, flags=re.IGNORECASE)
                 band = re.sub(r'\s*\[.*?\]$', '', band)
+                # Remove parentheses content if it looks like a venue/location
+                venue_pattern = r'\s*\([^)]*(?:live\s+at|at\s+|venue|concert|festival|session|studio|recording|from)[^)]*\)'
+                band = re.sub(venue_pattern, '', band, flags=re.IGNORECASE)
                 band = re.sub(r'\s*\(.*?\)$', '', band)
                 band = band.strip()
                 
@@ -625,6 +693,19 @@ def download_audio(youtube_url):
                 song = re.sub(r'\s*\(.*?\)$', '', song)
                 song = re.sub(r'\s*-\s*Official.*$', '', song, flags=re.IGNORECASE)
                 song = song.strip()
+                
+                # Detect potential issues with extracted metadata (same as first attempt)
+                venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']
+                if any(indicator in band.lower() for indicator in venue_indicators):
+                    print(f"⚠️  Warning: Band name '{band}' looks like a venue/location. May need manual correction.", file=sys.stderr)
+                
+                if len(band.split()) > 4 and len(band) > 30:
+                    print(f"⚠️  Warning: Band name '{band}' is unusually long. Possible band/song swap?", file=sys.stderr)
+                
+                if len(song.split()) <= 1 and len(song) < 10:
+                    print(f"⚠️  Warning: Song name '{song}' is very short. Possible band/song swap?", file=sys.stderr)
+                
+                print(f"📋 Extracted metadata: Band='{band}', Song='{song}'", file=sys.stderr)
                 
                 return audio_path, band, song
         except Exception as e2:
@@ -805,11 +886,12 @@ def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=
 def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=None):
     """
     SDXL-TURBO OPTIMIZED: Concise, high-impact prompts under 77 tokens.
-    Removes artist names to avoid face generation.
+    Handles missing genre gracefully.
     """
     
     genre_hint = normalize_genre(raw_genres) if raw_genres else "abstract"
     genre_key = genre_hint.lower()
+    has_genre = (genre_hint != "abstract")  # Flag to check if we have real genre
     
     # Extract features
     tempo = features.get("tempo", 120)
@@ -914,7 +996,7 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "techno": ["relentless machine", "hypnotic loop", "modular precision", "raw rhythm"],
         "folk": ["dancing tradition", "fireside storytelling", "cultural tapestry", "acoustic purity"],
         "folk rock": ["electrified roots", "pastoral calm", "narrative weaving", "folk honesty"],
-        "abstract": ["formless energy", "shapeless calm", "conceptual layers", "pure form"],
+        "abstract": ["flowing forms", "ethereal shapes", "pure expression", "sonic essence"],
     }
     
     flavors = genre_flavors.get(genre_key, genre_flavors["abstract"])
@@ -928,30 +1010,42 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     else:
         flavor = flavors[3]
     
-    print(f"   Genre: {genre_hint}, Flavor: {flavor}", file=sys.stderr)
+    if has_genre:
+        print(f"   Genre: {genre_hint}, Flavor: {flavor}", file=sys.stderr)
+    else:
+        print(f"   No genre found - using feature-driven description: {flavor}", file=sys.stderr)
     
     # ==========================================
-    # CRITICAL: DO NOT include artist names
+    # PROMPT STRUCTURE: Different for abstract vs genre-known
     # ==========================================
-    # Famous artists trigger face generation in SDXL
-    # Use genre + mood instead of identity
     
-    # ULTRA-CONCISE PROMPT (targeting ~50-60 tokens max)
-    prompt = (
-        f"abstract {genre_hint} music poster, {flavor}, {mood} mood, "
-        f"{lighting}, {motion}, {colors} colors, {composition}, "
-        f"geometric symbolic forms, volumetric depth, no text, no faces"
-    )
+    if has_genre:
+        # Has genre: use genre-based structure
+        prompt = (
+            f"abstract {genre_hint} music poster, {flavor}, {mood} mood, "
+            f"{lighting}, {motion}, {colors} colors, {composition}, "
+            f"geometric symbolic forms, volumetric depth, no text, no faces"
+        )
+    else:
+        # No genre: use purely descriptive structure based on audio features
+        # Replace "abstract abstract" with more descriptive terms
+        prompt = (
+            f"music poster art, {flavor}, {mood} mood, "
+            f"{lighting}, {motion}, {colors} colors, {composition}, "
+            f"geometric symbolic forms, volumetric depth, no text, no faces"
+        )
     
-    # Negative prompt - short and punchy
+    # Negative prompt (barely used in SDXL Turbo, but doesn't hurt)
     negative_prompt = (
         "text, letters, words, watermark, faces, people, portraits, "
         "photo, realistic, messy, blurry, low quality"
     )
     
-    # Count tokens (rough estimate: ~1.3 chars per token)
-    est_tokens = len(prompt) / 1.3
-    print(f"   Estimated tokens: ~{est_tokens:.0f}/77", file=sys.stderr)
+    # PROPER token counting - rough estimate by word count
+    word_count = len(prompt.split())
+    est_tokens = int(word_count * 1.4)  # Conservative estimate
+    
+    print(f"   Words: {word_count}, Est. tokens: ~{est_tokens}/77", file=sys.stderr)
     
     if est_tokens > 75:
         print(f"   ⚠️  WARNING: Prompt may be too long!", file=sys.stderr)
