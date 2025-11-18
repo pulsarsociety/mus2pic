@@ -32,6 +32,14 @@ except ImportError:
     print("Warning: spotipy not available. Spotify genre extraction will be disabled.")
     print("Install with: pip install spotipy")
 
+# Try to import requests for YouTube page scraping
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    print("Warning: requests not available. YouTube page metadata extraction will be disabled.", file=sys.stderr)
+
 # Cache file path
 CACHE_FILE = "band_song_cache.json"
 CACHE_DIR = "cache"
@@ -590,6 +598,309 @@ def infer_genre_from_features(features):
     else:
         return None  # Return None to use default genre in v3
 
+# Primary method: Extract videoAttributeViewModel from YouTube page JSON
+def extract_video_attribute_from_page(video_id):
+    """
+    Extract videoAttributeViewModel (title/subtitle) from YouTube page JSON.
+    This contains structured music metadata that YouTube displays.
+    
+    Returns: (artist, song) or (None, None) if not found
+    """
+    if not REQUESTS_AVAILABLE:
+        return None, None
+    
+    try:
+        # Fetch the YouTube page
+        url = f'https://www.youtube.com/watch?v={video_id}'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        html = response.text
+        
+        # Look for ytInitialData in the HTML
+        # It's usually in a script tag: var ytInitialData = {...};
+        patterns = [
+            r'var\s+ytInitialData\s*=\s*({.+?});',
+            r'window\["ytInitialData"\]\s*=\s*({.+?});',
+            r'ytInitialData\s*=\s*({.+?});',
+        ]
+        
+        json_data = None
+        for pattern in patterns:
+            match = re.search(pattern, html, re.DOTALL)
+            if match:
+                try:
+                    json_data = json.loads(match.group(1))
+                    break
+                except json.JSONDecodeError:
+                    continue
+        
+        if not json_data:
+            return None, None
+        
+        # Navigate through the JSON structure to find videoAttributeViewModel
+        # Structure: contents -> twoColumnWatchNextResults -> results -> results -> contents
+        # Or: horizontalCardListRenderer -> cards -> videoAttributeViewModel
+        
+        def find_video_attribute(obj, path=""):
+            """Recursively search for videoAttributeViewModel"""
+            if isinstance(obj, dict):
+                if 'videoAttributeViewModel' in obj:
+                    vm = obj['videoAttributeViewModel']
+                    title = vm.get('title', '').strip()
+                    subtitle = vm.get('subtitle', '').strip()
+                    if title and subtitle:
+                        return subtitle, title  # subtitle is artist, title is song
+                
+                # Also check for horizontalCardListRenderer
+                if 'horizontalCardListRenderer' in obj:
+                    cards = obj['horizontalCardListRenderer'].get('cards', [])
+                    for card in cards:
+                        if 'videoAttributeViewModel' in card:
+                            vm = card['videoAttributeViewModel']
+                            title = vm.get('title', '').strip()
+                            subtitle = vm.get('subtitle', '').strip()
+                            if title and subtitle:
+                                return subtitle, title
+                
+                # Recursively search nested structures
+                for key, value in obj.items():
+                    result = find_video_attribute(value, f"{path}.{key}")
+                    if result[0] and result[1]:
+                        return result
+            
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    result = find_video_attribute(item, f"{path}[{i}]")
+                    if result[0] and result[1]:
+                        return result
+            
+            return None, None
+        
+        return find_video_attribute(json_data)
+        
+    except Exception as e:
+        # Silently fail - this is a fallback method
+        return None, None
+
+# Helper function to extract band and song from YouTube metadata
+def extract_band_song_from_metadata(info):
+    """
+    Extract band name and song title from YouTube metadata info dict.
+    Returns: (band_name, song_title)
+    """
+    title = info.get('title', 'Unknown')
+    uploader = info.get('uploader', 'Unknown Artist')
+    
+    # First, try to get artist and track directly from metadata (most reliable)
+    # yt-dlp often provides these fields directly
+    metadata_artist = info.get('artist') or info.get('creator')
+    metadata_track = info.get('track')
+    
+    # Try to parse band and song from title (don't rely on uploader/creator)
+    # Common patterns: "Band - Song", "Song - Band", "Band: Song", etc.
+    band = None
+    song = None
+    
+    # Priority 1: Use metadata fields if available
+    if metadata_artist and metadata_track:
+        band = metadata_artist
+        song = metadata_track
+        print(f"Using metadata fields: Band='{band}', Song='{song}'", file=sys.stderr)
+    elif metadata_artist:
+        # Have artist but no track, try to get song from title
+        band = metadata_artist
+        song = title
+        print(f"Using metadata artist with title: Band='{band}', Song='{song}'", file=sys.stderr)
+    
+    # Priority 2: Parse from title if metadata not available
+    if band and song:
+        pass  # Already have band and song from metadata
+    # Pattern 1: "Band - Song" (most common)
+    elif ' - ' in title:
+        parts = title.split(' - ', 1)
+        potential_band = parts[0].strip()
+        potential_song = parts[1].strip()
+        
+        # Heuristics to determine which is band vs song:
+        # - Band names are usually shorter and more consistent
+        # - Song titles can be longer and more varied
+        # - Check if first part contains common band indicators
+        if len(potential_band) <= 50 and len(potential_song) <= 100:
+            # Both reasonable lengths, check for indicators
+            # If second part has "Official", "Lyrics", "Video", etc., first is likely band
+            if any(word in potential_song.lower() for word in ['official', 'lyrics', 'video', 'hq', 'hd', '4k']):
+                band = potential_band
+                song = potential_song
+            # If first part is very short (< 15 chars), likely band
+            elif len(potential_band) < 15:
+                band = potential_band
+                song = potential_song
+            # Default: first is band, second is song (most common pattern)
+            else:
+                band = potential_band
+                song = potential_song
+        else:
+            # Default to first is band
+            band = potential_band
+            song = potential_song
+    
+    # Pattern 2: "Song by Band"
+    elif not band and ' by ' in title.lower():
+        parts = title.lower().split(' by ', 1)
+        song = parts[0].strip()
+        band = parts[1].strip()
+    
+    # Pattern 3: "Song (Band)" or "Song [Band]" - but skip if it's just quality indicators or venues
+    elif not band and ' (' in title and title.endswith(')'):
+        # Check if the content in parentheses looks like a quality indicator, venue, or band name
+        idx = title.rfind(' (')
+        paren_content = title[idx+2:-1].strip().lower()
+        # Skip if it's a quality indicator (HD, 4K, live, official, etc.)
+        quality_indicators = ['hd', '4k', '8k', 'live', 'official', 'lyrics', 'video', 'audio', 'hq', 'remastered', 'remaster']
+        # Skip if it's a venue/location indicator
+        venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording', 'from']
+        is_venue = any(venue in paren_content for venue in venue_indicators)
+        if paren_content not in quality_indicators and not is_venue and len(paren_content) > 2:
+            song = title[:idx].strip()
+            band = title[idx+2:-1].strip()
+    elif not band and ' [' in title and title.endswith(']'):
+        idx = title.rfind(' [')
+        bracket_content = title[idx+2:-1].strip().lower()
+        # Check if bracket content is a venue/location
+        venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording', 'from']
+        is_venue = any(venue in bracket_content for venue in venue_indicators)
+        if not is_venue:
+            song = title[:idx].strip()
+            band = title[idx+2:-1].strip()
+    
+    # Pattern 4: "Band: Song"
+    elif not band and ':' in title and title.count(':') == 1:
+        parts = title.split(':', 1)
+        band = parts[0].strip()
+        song = parts[1].strip()
+    
+    # Pattern 5: "Band | Song"
+    elif not band and '|' in title:
+        parts = title.split('|', 1)
+        band = parts[0].strip()
+        song = parts[1].strip()
+    
+    # Pattern 6: Check description for "Band - Song" or "Song · Artist" pattern
+    # Do this BEFORE fallback to ensure we catch description patterns
+    if not band or not song:
+        description = info.get('description', '')
+        # Look for pattern like "Nightwish - High Hopes" (most common in description)
+        desc_match = re.search(r'^([^-·\n]+)\s*[-–—]\s*([^\n(]+)', description, re.MULTILINE)
+        if desc_match:
+            band = desc_match.group(1).strip()
+            song = desc_match.group(2).strip()
+            # Remove common suffixes from song
+            song = re.sub(r'\s*\(.*?\)$', '', song)  # Remove (live), (HD), etc.
+            song = song.strip()
+            print(f"Found 'Band - Song' pattern in description: Band='{band}', Song='{song}'", file=sys.stderr)
+        else:
+            # Look for pattern like "High Hopes · Nightwish"
+            desc_match = re.search(r'^([^·\n]+)\s*[·•]\s*([^\n]+)', description, re.MULTILINE)
+            if desc_match:
+                song = desc_match.group(1).strip()
+                band = desc_match.group(2).strip()
+                print(f"Found 'Song · Artist' pattern in description: Band='{band}', Song='{song}'", file=sys.stderr)
+    
+    # Pattern 7: Handle Japanese brackets 「Band」Song or 「Band」Song lyrics
+    if not band and '「' in title and '」' in title:
+        # Extract text between Japanese brackets as band
+        jp_match = re.search(r'「([^」]+)」', title)
+        if jp_match:
+            band = jp_match.group(1).strip()
+            # Remove the bracket part and clean up
+            song = re.sub(r'「[^」]+」', '', title).strip()
+            # Remove common suffixes
+            song = re.sub(r'\s*\(.*?\)$', '', song)  # Remove (HD), (live), etc.
+            song = re.sub(r'\s*lyrics.*$', '', song, flags=re.IGNORECASE)
+            song = song.strip()
+            print(f"Found Japanese bracket pattern: Band='{band}', Song='{song}'", file=sys.stderr)
+    
+    # Fallback: if no pattern matched, use title as song and try to extract from uploader
+    if not band or not song:
+        song = title
+        # Only use uploader if it doesn't look like a generic channel name
+        uploader_lower = uploader.lower()
+        if not any(suffix in uploader_lower for suffix in ['topic', 'vevo', 'official', 'channel', 'music', 'records', 'label']):
+            band = uploader
+        else:
+            # Try to extract from title - use first word or first few words
+            words = title.split()
+            if len(words) > 1:
+                # Use first 1-3 words as potential band name
+                band = ' '.join(words[:min(3, len(words))])
+            else:
+                band = 'Unknown Artist'
+    
+    # Clean up band name - remove common suffixes and channel indicators
+    band = re.sub(r'\s*-\s*Topic$', '', band, flags=re.IGNORECASE)
+    band = re.sub(r'\s*VEVO$', '', band, flags=re.IGNORECASE)
+    band = re.sub(r'\s*Official.*$', '', band, flags=re.IGNORECASE)
+    band = re.sub(r'\s*\[.*?\]$', '', band)  # Remove [Official Video] etc
+    # Remove parentheses content if it looks like a venue/location
+    venue_pattern = r'\s*\([^)]*(?:live\s+at|at\s+|venue|concert|festival|session|studio|recording|from)[^)]*\)'
+    band = re.sub(venue_pattern, '', band, flags=re.IGNORECASE)
+    band = re.sub(r'\s*\(.*?\)$', '', band)  # Remove remaining (Official Audio) etc
+    band = re.sub(r'^[「『]|[''」』]$', '', band)  # Remove Japanese brackets if still present
+    band = band.strip()
+    
+    # Clean up song name - remove common video indicators
+    song = re.sub(r'\s*\[.*?\]$', '', song)  # Remove [Official Video] etc
+    song = re.sub(r'\s*\(.*?\)$', '', song)  # Remove (HD), (live), (Official Audio) etc
+    song = re.sub(r'\s*-\s*Official.*$', '', song, flags=re.IGNORECASE)
+    song = re.sub(r'\s*lyrics.*$', '', song, flags=re.IGNORECASE)  # Remove "lyrics", "lyrics HD", etc.
+    song = re.sub(r'\s*\(HD\)$', '', song, flags=re.IGNORECASE)  # Remove (HD) suffix
+    song = re.sub(r'^[「『]|[''」』]$', '', song)  # Remove Japanese brackets if still present
+    song = song.strip()
+    
+    # Aggressive cleanup - final pass to remove all remaining junk
+    def aggressive_cleanup(text):
+        """Final cleanup pass to remove all remaining junk."""
+        if not text:
+            return text
+        
+        # Remove everything after common indicators
+        text = re.split(r'\s*[\|\–\—]\s*Official', text, flags=re.IGNORECASE)[0]
+        text = re.split(r'\s*[\|\–\—]\s*Lyrics', text, flags=re.IGNORECASE)[0]
+        text = re.split(r'\s*[\|\–\—]\s*Audio', text, flags=re.IGNORECASE)[0]
+        
+        # Remove all parentheses and brackets with content
+        text = re.sub(r'\s*[\[\(].*?[\]\)]', '', text)
+        
+        # Remove trailing quality indicators
+        text = re.sub(r'\s*(HD|HQ|4K|8K|Official|Lyric|Video|Audio).*$', '', text, flags=re.IGNORECASE)
+        
+        return text.strip()
+    
+    # Apply aggressive cleanup to both band and song AFTER extraction
+    band = aggressive_cleanup(band)
+    song = aggressive_cleanup(song)
+    
+    # Detect potential issues with extracted metadata
+    # Check if band name looks like a song title or venue name
+    venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']
+    if any(indicator in band.lower() for indicator in venue_indicators):
+        print(f"⚠️  Warning: Band name '{band}' looks like a venue/location. May need manual correction.", file=sys.stderr)
+    
+    # Check if band name looks like a song title (long, descriptive phrases)
+    if len(band.split()) > 4 and len(band) > 30:
+        print(f"⚠️  Warning: Band name '{band}' is unusually long. Possible band/song swap?", file=sys.stderr)
+    
+    # Check if song name is very short (could be band name)
+    if len(song.split()) <= 1 and len(song) < 10:
+        print(f"⚠️  Warning: Song name '{song}' is very short. Possible band/song swap?", file=sys.stderr)
+    
+    print(f"📋 Extracted metadata: Band='{band}', Song='{song}'", file=sys.stderr)
+    
+    return band, song
+
 # 1. Extract audio from YouTube and get metadata
 def download_audio(youtube_url):
     """
@@ -599,6 +910,15 @@ def download_audio(youtube_url):
     # Extract just the video ID to avoid playlist issues
     clean_url = extract_video_id(youtube_url)
     print(f"Downloading from: {clean_url}")
+    
+    # PRIMARY METHOD: Try to extract from YouTube page JSON first (most reliable)
+    page_artist, page_song = extract_video_attribute_from_page(clean_url)
+    if page_artist and page_song:
+        print(f"✅ Extracted from YouTube page: Band='{page_artist}', Song='{page_song}'", file=sys.stderr)
+        # We still need to download the audio, but we'll use the extracted metadata
+        use_page_metadata = True
+    else:
+        use_page_metadata = False
     
     # First try: Download as audio file that librosa can read directly (mp3, m4a)
     # This avoids FFmpeg conversion issues
@@ -636,214 +956,12 @@ def download_audio(youtube_url):
                 if audio_path is None:
                     audio_path = 'temp_audio.m4a'  # Default
             
-            # Extract metadata
-            title = info.get('title', 'Unknown')
-            uploader = info.get('uploader', 'Unknown Artist')
-            
-            # First, try to get artist and track directly from metadata (most reliable)
-            # yt-dlp often provides these fields directly
-            metadata_artist = info.get('artist') or info.get('creator')
-            metadata_track = info.get('track')
-            
-            # Try to parse band and song from title (don't rely on uploader/creator)
-            # Common patterns: "Band - Song", "Song - Band", "Band: Song", etc.
-            band = None
-            song = None
-            
-            # Priority 1: Use metadata fields if available
-            if metadata_artist and metadata_track:
-                band = metadata_artist
-                song = metadata_track
-                print(f"Using metadata fields: Band='{band}', Song='{song}'", file=sys.stderr)
-            elif metadata_artist:
-                # Have artist but no track, try to get song from title
-                band = metadata_artist
-                song = title
-                print(f"Using metadata artist with title: Band='{band}', Song='{song}'", file=sys.stderr)
-            
-            # Priority 2: Parse from title if metadata not available
-            if band and song:
-                pass  # Already have band and song from metadata
-            # Pattern 1: "Band - Song" (most common)
-            elif ' - ' in title:
-                parts = title.split(' - ', 1)
-                potential_band = parts[0].strip()
-                potential_song = parts[1].strip()
-                
-                # Heuristics to determine which is band vs song:
-                # - Band names are usually shorter and more consistent
-                # - Song titles can be longer and more varied
-                # - Check if first part contains common band indicators
-                if len(potential_band) <= 50 and len(potential_song) <= 100:
-                    # Both reasonable lengths, check for indicators
-                    # If second part has "Official", "Lyrics", "Video", etc., first is likely band
-                    if any(word in potential_song.lower() for word in ['official', 'lyrics', 'video', 'hq', 'hd', '4k']):
-                        band = potential_band
-                        song = potential_song
-                    # If first part is very short (< 15 chars), likely band
-                    elif len(potential_band) < 15:
-                        band = potential_band
-                        song = potential_song
-                    # Default: first is band, second is song (most common pattern)
-                    else:
-                        band = potential_band
-                        song = potential_song
-                else:
-                    # Default to first is band
-                    band = potential_band
-                    song = potential_song
-            
-            # Pattern 2: "Song by Band"
-            elif not band and ' by ' in title.lower():
-                parts = title.lower().split(' by ', 1)
-                song = parts[0].strip()
-                band = parts[1].strip()
-            
-            # Pattern 3: "Song (Band)" or "Song [Band]" - but skip if it's just quality indicators or venues
-            elif not band and ' (' in title and title.endswith(')'):
-                # Check if the content in parentheses looks like a quality indicator, venue, or band name
-                idx = title.rfind(' (')
-                paren_content = title[idx+2:-1].strip().lower()
-                # Skip if it's a quality indicator (HD, 4K, live, official, etc.)
-                quality_indicators = ['hd', '4k', '8k', 'live', 'official', 'lyrics', 'video', 'audio', 'hq', 'remastered', 'remaster']
-                # Skip if it's a venue/location indicator
-                venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording', 'from']
-                is_venue = any(venue in paren_content for venue in venue_indicators)
-                if paren_content not in quality_indicators and not is_venue and len(paren_content) > 2:
-                    song = title[:idx].strip()
-                    band = title[idx+2:-1].strip()
-            elif not band and ' [' in title and title.endswith(']'):
-                idx = title.rfind(' [')
-                bracket_content = title[idx+2:-1].strip().lower()
-                # Check if bracket content is a venue/location
-                venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording', 'from']
-                is_venue = any(venue in bracket_content for venue in venue_indicators)
-                if not is_venue:
-                    song = title[:idx].strip()
-                    band = title[idx+2:-1].strip()
-            
-            # Pattern 4: "Band: Song"
-            elif not band and ':' in title and title.count(':') == 1:
-                parts = title.split(':', 1)
-                band = parts[0].strip()
-                song = parts[1].strip()
-            
-            # Pattern 5: "Band | Song"
-            elif not band and '|' in title:
-                parts = title.split('|', 1)
-                band = parts[0].strip()
-                song = parts[1].strip()
-            
-            # Pattern 6: Check description for "Band - Song" or "Song · Artist" pattern
-            # Do this BEFORE fallback to ensure we catch description patterns
-            if not band or not song:
-                description = info.get('description', '')
-                # Look for pattern like "Nightwish - High Hopes" (most common in description)
-                desc_match = re.search(r'^([^-·\n]+)\s*[-–—]\s*([^\n(]+)', description, re.MULTILINE)
-                if desc_match:
-                    band = desc_match.group(1).strip()
-                    song = desc_match.group(2).strip()
-                    # Remove common suffixes from song
-                    song = re.sub(r'\s*\(.*?\)$', '', song)  # Remove (live), (HD), etc.
-                    song = song.strip()
-                    print(f"Found 'Band - Song' pattern in description: Band='{band}', Song='{song}'", file=sys.stderr)
-                else:
-                    # Look for pattern like "High Hopes · Nightwish"
-                    desc_match = re.search(r'^([^·\n]+)\s*[·•]\s*([^\n]+)', description, re.MULTILINE)
-                    if desc_match:
-                        song = desc_match.group(1).strip()
-                        band = desc_match.group(2).strip()
-                        print(f"Found 'Song · Artist' pattern in description: Band='{band}', Song='{song}'", file=sys.stderr)
-            
-            # Pattern 7: Handle Japanese brackets 「Band」Song or 「Band」Song lyrics
-            if not band and '「' in title and '」' in title:
-                # Extract text between Japanese brackets as band
-                jp_match = re.search(r'「([^」]+)」', title)
-                if jp_match:
-                    band = jp_match.group(1).strip()
-                    # Remove the bracket part and clean up
-                    song = re.sub(r'「[^」]+」', '', title).strip()
-                    # Remove common suffixes
-                    song = re.sub(r'\s*\(.*?\)$', '', song)  # Remove (HD), (live), etc.
-                    song = re.sub(r'\s*lyrics.*$', '', song, flags=re.IGNORECASE)
-                    song = song.strip()
-                    print(f"Found Japanese bracket pattern: Band='{band}', Song='{song}'", file=sys.stderr)
-            
-            # Fallback: if no pattern matched, use title as song and try to extract from uploader
-            if not band or not song:
-                song = title
-                # Only use uploader if it doesn't look like a generic channel name
-                uploader_lower = uploader.lower()
-                if not any(suffix in uploader_lower for suffix in ['topic', 'vevo', 'official', 'channel', 'music', 'records', 'label']):
-                    band = uploader
-                else:
-                    # Try to extract from title - use first word or first few words
-                    words = title.split()
-                    if len(words) > 1:
-                        # Use first 1-3 words as potential band name
-                        band = ' '.join(words[:min(3, len(words))])
-                    else:
-                        band = 'Unknown Artist'
-            
-            # Clean up band name - remove common suffixes and channel indicators
-            band = re.sub(r'\s*-\s*Topic$', '', band, flags=re.IGNORECASE)
-            band = re.sub(r'\s*VEVO$', '', band, flags=re.IGNORECASE)
-            band = re.sub(r'\s*Official.*$', '', band, flags=re.IGNORECASE)
-            band = re.sub(r'\s*\[.*?\]$', '', band)  # Remove [Official Video] etc
-            # Remove parentheses content if it looks like a venue/location
-            venue_pattern = r'\s*\([^)]*(?:live\s+at|at\s+|venue|concert|festival|session|studio|recording|from)[^)]*\)'
-            band = re.sub(venue_pattern, '', band, flags=re.IGNORECASE)
-            band = re.sub(r'\s*\(.*?\)$', '', band)  # Remove remaining (Official Audio) etc
-            band = re.sub(r'^[「『]|[''」』]$', '', band)  # Remove Japanese brackets if still present
-            band = band.strip()
-            
-            # Clean up song name - remove common video indicators
-            song = re.sub(r'\s*\[.*?\]$', '', song)  # Remove [Official Video] etc
-            song = re.sub(r'\s*\(.*?\)$', '', song)  # Remove (HD), (live), (Official Audio) etc
-            song = re.sub(r'\s*-\s*Official.*$', '', song, flags=re.IGNORECASE)
-            song = re.sub(r'\s*lyrics.*$', '', song, flags=re.IGNORECASE)  # Remove "lyrics", "lyrics HD", etc.
-            song = re.sub(r'\s*\(HD\)$', '', song, flags=re.IGNORECASE)  # Remove (HD) suffix
-            song = re.sub(r'^[「『]|[''」』]$', '', song)  # Remove Japanese brackets if still present
-            song = song.strip()
-            
-            # Aggressive cleanup - final pass to remove all remaining junk
-            def aggressive_cleanup(text):
-                """Final cleanup pass to remove all remaining junk."""
-                if not text:
-                    return text
-                
-                # Remove everything after common indicators
-                text = re.split(r'\s*[\|\–\—]\s*Official', text, flags=re.IGNORECASE)[0]
-                text = re.split(r'\s*[\|\–\—]\s*Lyrics', text, flags=re.IGNORECASE)[0]
-                text = re.split(r'\s*[\|\–\—]\s*Audio', text, flags=re.IGNORECASE)[0]
-                
-                # Remove all parentheses and brackets with content
-                text = re.sub(r'\s*[\[\(].*?[\]\)]', '', text)
-                
-                # Remove trailing quality indicators
-                text = re.sub(r'\s*(HD|HQ|4K|8K|Official|Lyric|Video|Audio).*$', '', text, flags=re.IGNORECASE)
-                
-                return text.strip()
-            
-            # Apply aggressive cleanup to both band and song AFTER extraction
-            band = aggressive_cleanup(band)
-            song = aggressive_cleanup(song)
-            
-            # Detect potential issues with extracted metadata
-            # Check if band name looks like a song title or venue name
-            venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']
-            if any(indicator in band.lower() for indicator in venue_indicators):
-                print(f"⚠️  Warning: Band name '{band}' looks like a venue/location. May need manual correction.", file=sys.stderr)
-            
-            # Check if band name looks like a song title (long, descriptive phrases)
-            if len(band.split()) > 4 and len(band) > 30:
-                print(f"⚠️  Warning: Band name '{band}' is unusually long. Possible band/song swap?", file=sys.stderr)
-            
-            # Check if song name is very short (could be band name)
-            if len(song.split()) <= 1 and len(song) < 10:
-                print(f"⚠️  Warning: Song name '{song}' is very short. Possible band/song swap?", file=sys.stderr)
-            
-            print(f"📋 Extracted metadata: Band='{band}', Song='{song}'", file=sys.stderr)
+            # Use page metadata if available, otherwise fall back to yt-dlp metadata extraction
+            if use_page_metadata:
+                band, song = page_artist, page_song
+            else:
+                # Extract metadata using shared function (fallback method)
+                band, song = extract_band_song_from_metadata(info)
             
             return audio_path, band, song
     except Exception as e:
@@ -873,127 +991,12 @@ def download_audio(youtube_url):
                     if audio_path is None:
                         audio_path = 'temp_audio.m4a'
                 
-                # Extract metadata (same logic as first attempt)
-                title = info.get('title', 'Unknown')
-                uploader = info.get('uploader', 'Unknown Artist')
-                
-                # First, try metadata fields
-                metadata_artist = info.get('artist') or info.get('creator')
-                metadata_track = info.get('track')
-                
-                band = None
-                song = None
-                
-                if metadata_artist and metadata_track:
-                    band = metadata_artist
-                    song = metadata_track
-                elif metadata_artist:
-                    band = metadata_artist
-                    song = title
-                elif ' - ' in title:
-                    parts = title.split(' - ', 1)
-                    potential_band = parts[0].strip()
-                    potential_song = parts[1].strip()
-                    
-                    if len(potential_band) <= 50 and len(potential_song) <= 100:
-                        if any(word in potential_song.lower() for word in ['official', 'lyrics', 'video', 'hq', 'hd', '4k']):
-                            band = potential_band
-                            song = potential_song
-                        elif len(potential_band) < 15:
-                            band = potential_band
-                            song = potential_song
-                        else:
-                            band = potential_band
-                            song = potential_song
-                    else:
-                        band = potential_band
-                        song = potential_song
-                elif ' by ' in title.lower():
-                    parts = title.lower().split(' by ', 1)
-                    song = parts[0].strip()
-                    band = parts[1].strip()
-                elif ' (' in title and title.endswith(')'):
-                    idx = title.rfind(' (')
-                    song = title[:idx].strip()
-                    band = title[idx+2:-1].strip()
-                elif ' [' in title and title.endswith(']'):
-                    idx = title.rfind(' [')
-                    song = title[:idx].strip()
-                    band = title[idx+2:-1].strip()
-                elif ':' in title and title.count(':') == 1:
-                    parts = title.split(':', 1)
-                    band = parts[0].strip()
-                    song = parts[1].strip()
-                elif '|' in title:
-                    parts = title.split('|', 1)
-                    band = parts[0].strip()
-                    song = parts[1].strip()
-                
-                # Fallback
-                if not band or not song:
-                    song = title
-                    uploader_lower = uploader.lower()
-                    if not any(suffix in uploader_lower for suffix in ['topic', 'vevo', 'official', 'channel', 'music', 'records', 'label']):
-                        band = uploader
-                    else:
-                        words = title.split()
-                        if len(words) > 1:
-                            band = ' '.join(words[:min(3, len(words))])
-                        else:
-                            band = 'Unknown Artist'
-                
-                # Clean up band name
-                band = re.sub(r'\s*-\s*Topic$', '', band, flags=re.IGNORECASE)
-                band = re.sub(r'\s*VEVO$', '', band, flags=re.IGNORECASE)
-                band = re.sub(r'\s*Official.*$', '', band, flags=re.IGNORECASE)
-                band = re.sub(r'\s*\[.*?\]$', '', band)
-                # Remove parentheses content if it looks like a venue/location
-                venue_pattern = r'\s*\([^)]*(?:live\s+at|at\s+|venue|concert|festival|session|studio|recording|from)[^)]*\)'
-                band = re.sub(venue_pattern, '', band, flags=re.IGNORECASE)
-                band = re.sub(r'\s*\(.*?\)$', '', band)
-                band = band.strip()
-                
-                # Clean up song name
-                song = re.sub(r'\s*\[.*?\]$', '', song)
-                song = re.sub(r'\s*\(.*?\)$', '', song)
-                song = re.sub(r'\s*-\s*Official.*$', '', song, flags=re.IGNORECASE)
-                song = song.strip()
-                
-                # Aggressive cleanup - final pass to remove all remaining junk (same as first attempt)
-                def aggressive_cleanup(text):
-                    """Final cleanup pass to remove all remaining junk."""
-                    if not text:
-                        return text
-                    
-                    # Remove everything after common indicators
-                    text = re.split(r'\s*[\|\–\—]\s*Official', text, flags=re.IGNORECASE)[0]
-                    text = re.split(r'\s*[\|\–\—]\s*Lyrics', text, flags=re.IGNORECASE)[0]
-                    text = re.split(r'\s*[\|\–\—]\s*Audio', text, flags=re.IGNORECASE)[0]
-                    
-                    # Remove all parentheses and brackets with content
-                    text = re.sub(r'\s*[\[\(].*?[\]\)]', '', text)
-                    
-                    # Remove trailing quality indicators
-                    text = re.sub(r'\s*(HD|HQ|4K|8K|Official|Lyric|Video|Audio).*$', '', text, flags=re.IGNORECASE)
-                    
-                    return text.strip()
-                
-                # Apply aggressive cleanup to both band and song AFTER extraction
-                band = aggressive_cleanup(band)
-                song = aggressive_cleanup(song)
-                
-                # Detect potential issues with extracted metadata (same as first attempt)
-                venue_indicators = ['live at', 'at ', 'venue', 'concert', 'festival', 'session', 'studio', 'recording']
-                if any(indicator in band.lower() for indicator in venue_indicators):
-                    print(f"⚠️  Warning: Band name '{band}' looks like a venue/location. May need manual correction.", file=sys.stderr)
-                
-                if len(band.split()) > 4 and len(band) > 30:
-                    print(f"⚠️  Warning: Band name '{band}' is unusually long. Possible band/song swap?", file=sys.stderr)
-                
-                if len(song.split()) <= 1 and len(song) < 10:
-                    print(f"⚠️  Warning: Song name '{song}' is very short. Possible band/song swap?", file=sys.stderr)
-                
-                print(f"📋 Extracted metadata: Band='{band}', Song='{song}'", file=sys.stderr)
+                # Use page metadata if available, otherwise fall back to yt-dlp metadata extraction
+                if use_page_metadata:
+                    band, song = page_artist, page_song
+                else:
+                    # Extract metadata using shared function (fallback method)
+                    band, song = extract_band_song_from_metadata(info)
                 
                 return audio_path, band, song
         except Exception as e2:
