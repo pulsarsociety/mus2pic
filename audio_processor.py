@@ -42,6 +42,7 @@ except ImportError:
 
 # Cache file path
 CACHE_FILE = "band_song_cache.json"
+YOUTUBE_METADATA_CACHE_FILE = "youtube_metadata_cache.json"
 CACHE_DIR = "cache"
 
 # Ensure cache directory exists
@@ -57,6 +58,50 @@ def extract_video_id(url):
         # Return clean URL with just the video ID
         return f"https://www.youtube.com/watch?v={video_id}"
     return url
+
+def get_video_id_from_url(url):
+    """Extract just the video ID (11 characters) from YouTube URL."""
+    match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11}).*', url)
+    if match:
+        return match.group(1)
+    return None
+
+# YouTube metadata cache management functions
+def load_youtube_metadata_cache():
+    """Load the YouTube video ID -> band/song cache from JSON file."""
+    if os.path.exists(YOUTUBE_METADATA_CACHE_FILE):
+        try:
+            with open(YOUTUBE_METADATA_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Could not load YouTube metadata cache file: {e}", file=sys.stderr)
+            return {}
+    return {}
+
+def save_youtube_metadata_cache(cache):
+    """Save the YouTube video ID -> band/song cache to JSON file."""
+    try:
+        with open(YOUTUBE_METADATA_CACHE_FILE, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except IOError as e:
+        print(f"Warning: Could not save YouTube metadata cache file: {e}", file=sys.stderr)
+
+def get_cached_youtube_metadata(video_id):
+    """Get cached band/song for a YouTube video ID."""
+    cache = load_youtube_metadata_cache()
+    entry = cache.get(video_id)
+    if entry:
+        return entry.get('band'), entry.get('song')
+    return None, None
+
+def save_youtube_metadata(video_id, band, song):
+    """Save band/song metadata for a YouTube video ID."""
+    cache = load_youtube_metadata_cache()
+    cache[video_id] = {
+        'band': band,
+        'song': song
+    }
+    save_youtube_metadata_cache(cache)
 
 # Cache management functions
 def load_cache():
@@ -909,14 +954,35 @@ def download_audio(youtube_url):
     """
     # Extract just the video ID to avoid playlist issues
     clean_url = extract_video_id(youtube_url)
+    video_id = get_video_id_from_url(youtube_url)
+    
+    # Check cache first
+    if video_id:
+        cached_band, cached_song = get_cached_youtube_metadata(video_id)
+        if cached_band and cached_song:
+            print(f"✅ Using cached metadata for video {video_id}: Band='{cached_band}', Song='{cached_song}'", file=sys.stderr)
+            # We still need to download the audio, but we'll use the cached metadata
+            use_cached_metadata = True
+        else:
+            use_cached_metadata = False
+    else:
+        use_cached_metadata = False
+    
     print(f"Downloading from: {clean_url}")
     
     # PRIMARY METHOD: Try to extract from YouTube page JSON first (most reliable)
-    page_artist, page_song = extract_video_attribute_from_page(clean_url)
-    if page_artist and page_song:
-        print(f"✅ Extracted from YouTube page: Band='{page_artist}', Song='{page_song}'", file=sys.stderr)
-        # We still need to download the audio, but we'll use the extracted metadata
-        use_page_metadata = True
+    # Skip if we have cached metadata
+    if not use_cached_metadata:
+        if video_id:
+            page_artist, page_song = extract_video_attribute_from_page(video_id)
+        else:
+            page_artist, page_song = None, None
+        if page_artist and page_song:
+            print(f"✅ Extracted from YouTube page: Band='{page_artist}', Song='{page_song}'", file=sys.stderr)
+            # We still need to download the audio, but we'll use the extracted metadata
+            use_page_metadata = True
+        else:
+            use_page_metadata = False
     else:
         use_page_metadata = False
     
@@ -956,12 +1022,19 @@ def download_audio(youtube_url):
                 if audio_path is None:
                     audio_path = 'temp_audio.m4a'  # Default
             
-            # Use page metadata if available, otherwise fall back to yt-dlp metadata extraction
-            if use_page_metadata:
+            # Use cached metadata if available, otherwise use page metadata, otherwise fall back to yt-dlp metadata extraction
+            if use_cached_metadata:
+                band, song = cached_band, cached_song
+            elif use_page_metadata:
                 band, song = page_artist, page_song
             else:
                 # Extract metadata using shared function (fallback method)
                 band, song = extract_band_song_from_metadata(info)
+            
+            # Save to cache if we have a video ID and successfully extracted metadata
+            if video_id and band and song and not use_cached_metadata:
+                save_youtube_metadata(video_id, band, song)
+                print(f"💾 Saved metadata to cache for video {video_id}", file=sys.stderr)
             
             return audio_path, band, song
     except Exception as e:
@@ -991,12 +1064,19 @@ def download_audio(youtube_url):
                     if audio_path is None:
                         audio_path = 'temp_audio.m4a'
                 
-                # Use page metadata if available, otherwise fall back to yt-dlp metadata extraction
-                if use_page_metadata:
+                # Use cached metadata if available, otherwise use page metadata, otherwise fall back to yt-dlp metadata extraction
+                if use_cached_metadata:
+                    band, song = cached_band, cached_song
+                elif use_page_metadata:
                     band, song = page_artist, page_song
                 else:
                     # Extract metadata using shared function (fallback method)
                     band, song = extract_band_song_from_metadata(info)
+                
+                # Save to cache if we have a video ID and successfully extracted metadata
+                if video_id and band and song and not use_cached_metadata:
+                    save_youtube_metadata(video_id, band, song)
+                    print(f"💾 Saved metadata to cache for video {video_id}", file=sys.stderr)
                 
                 return audio_path, band, song
         except Exception as e2:
