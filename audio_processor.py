@@ -552,14 +552,56 @@ def get_genre_from_musicbrainz(band_name, cache_file="genre_cache.json"):
     """
     Get genres from MusicBrainz API as fallback when Spotify fails.
     Uses the same cache format as Spotify genres.
+    Maps MusicBrainz tags to our genre system using GENRE_PRIORITY.
     
     Args:
         band_name: Artist/band name to search for
         cache_file: Cache file path (same as Spotify cache)
     
     Returns:
-        List of genres or None if not found
+        List of genres (mapped to our genre system) or None if not found
     """
+    # Define GENRE_PRIORITY to match our genre system (same as in normalize_genre)
+    GENRE_PRIORITY = {
+        # --- Metal hierarchy ---
+        "symphonic metal": 10, "progressive metal": 9, "gothic metal": 9,
+        "power metal": 8, "folk metal": 8, "black metal": 7, "death metal": 7,
+        "doom metal": 7, "metalcore": 7, "thrash metal": 7, "nu metal": 6, "metal": 5,
+        # --- Rock hierarchy ---
+        "psychedelic rock": 9, "progressive rock": 9, "alternative rock": 8,
+        "classic rock": 8, "hard rock": 8, "indie rock": 7, "grunge": 7,
+        "punk rock": 7, "post-rock": 8, "rock": 5,
+        # --- Jazz hierarchy ---
+        "free jazz": 9, "fusion": 9, "bebop": 8, "cool jazz": 8,
+        "smooth jazz": 7, "jazz funk": 7, "contemporary jazz": 7, "jazz": 6,
+        # --- Blues hierarchy ---
+        "delta blues": 8, "electric blues": 7, "blues rock": 7, "blues": 6,
+        # --- Soul / R&B / Funk ---
+        "neo soul": 8, "funk": 7, "soul": 7, "r&b": 6,
+        "rhythm and blues": 6, "motown": 7, "disco": 6,
+        # --- Hip-Hop / Rap ---
+        "conscious hip hop": 8, "trap": 7, "boom bap": 7, "gangsta rap": 7,
+        "hip hop": 6, "rap": 6,
+        # --- Electronic / EDM ---
+        "synthpop": 9, "electropop": 8, "techno": 7, "house": 7,
+        "trance": 7, "drum and bass": 7, "dubstep": 7, "edm": 6, "electronic": 6,
+        # --- Pop ---
+        "dance pop": 7, "indie pop": 7, "pop": 6,
+        # --- Country / Folk ---
+        "folk rock": 8, "americana": 7, "bluegrass": 7, "country": 6, "folk": 7,
+        # --- World / Regional ---
+        "afrobeat": 8, "reggae": 7, "latin": 6, "world": 6,
+        "bossa nova": 7, "flamenco": 7,
+        # --- Classical / Orchestral ---
+        "contemporary classical": 8, "orchestral": 7, "classical": 6,
+        "opera": 7, "baroque": 7,
+        # --- Experimental / Ambient ---
+        "avant-garde": 9, "experimental": 8, "ambient": 7,
+        "drone": 6, "noise": 6, "industrial": 7,
+        # --- Other ---
+        "slowcore": 6, "shoegaze": 7, "emo": 6, "ska": 6, "gospel": 6, "abstract": 5,
+    }
+    
     if not REQUESTS_AVAILABLE:
         return None
     
@@ -659,35 +701,113 @@ def get_genre_from_musicbrainz(band_name, cache_file="genre_cache.json"):
         
         # Extract tags (MusicBrainz uses tags for genres)
         tags = artist_data.get('tags', [])
-        genres = []
         
-        # Get tags with count > 0 (more reliable)
-        for tag in tags:
-            tag_name = tag.get('name', '').lower().strip()
-            count = tag.get('count', 0)
-            if tag_name and count > 0:
-                genres.append(tag_name)
-        
-        # If no tags, try to get from disambiguation or aliases
-        if not genres:
-            # Check for genre-like information in other fields
-            disambiguation = artist_data.get('disambiguation', '')
-            if disambiguation:
-                # Sometimes genre info is in disambiguation
-                pass
-        
-        if genres:
-            print(f"🎵 MusicBrainz genres for '{found_artist_name}': {genres}", file=sys.stderr)
-            cache[cache_key] = genres
-            with open(cache_file, "w") as f:
-                json.dump(cache, f)
-            return genres
-        else:
-            print(f"⚠️  No genres/tags found for '{found_artist_name}' in MusicBrainz", file=sys.stderr)
+        if not tags:
+            print(f"⚠️  No tags found for '{found_artist_name}' in MusicBrainz", file=sys.stderr)
             cache[cache_key] = "abstract"
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
             return None
+        
+        # Sort tags by count (most popular first)
+        sorted_tags = sorted(tags, key=lambda x: x.get('count', 0), reverse=True)
+        
+        # Map MusicBrainz tags to our genre system using GENRE_PRIORITY
+        # This ensures we get genres that match our prompt generator
+        matched_genres = []
+        tag_scores = {}
+        
+        for tag in sorted_tags:
+            tag_name = tag.get('name', '').lower().strip()
+            count = tag.get('count', 0)
+            
+            if not tag_name or count == 0:
+                continue
+            
+            # Try to match tag to our genre system
+            # Check for exact matches first, then partial matches
+            best_match = None
+            best_score = 0
+            
+            # Use GENRE_PRIORITY to find matching genres
+            for genre_key, priority in GENRE_PRIORITY.items():
+                genre_lower = genre_key.lower()
+                
+                # Exact match
+                if tag_name == genre_lower:
+                    score = priority * 1000 + count  # Priority + count for tie-breaking
+                    if score > best_score:
+                        best_score = score
+                        best_match = genre_key
+                # Tag contains genre or genre contains tag
+                elif genre_lower in tag_name or tag_name in genre_lower:
+                    score = priority * 100 + count
+                    if score > best_score:
+                        best_score = score
+                        best_match = genre_key
+                # Word overlap (for multi-word genres)
+                else:
+                    tag_words = set(tag_name.split())
+                    genre_words = set(genre_lower.split())
+                    overlap = len(tag_words & genre_words)
+                    if overlap > 0 and overlap == len(genre_words):
+                        # All genre words are in tag
+                        score = priority * 50 + count
+                        if score > best_score:
+                            best_score = score
+                            best_match = genre_key
+            
+            if best_match and best_match not in matched_genres:
+                matched_genres.append(best_match)
+                tag_scores[best_match] = best_score
+        
+        # If we found matches, return them sorted by score
+        if matched_genres:
+            # Sort by score (highest first)
+            matched_genres.sort(key=lambda g: tag_scores.get(g, 0), reverse=True)
+            # Return as list (same format as Spotify)
+            genres_list = matched_genres
+            print(f"🎵 MusicBrainz genres for '{found_artist_name}': {genres_list} (from tags: {[t.get('name') for t in sorted_tags[:5]]})", file=sys.stderr)
+            cache[cache_key] = genres_list
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return genres_list
+        
+        # Fallback: if no matches but we have tags, return top tags as-is
+        # Filter for genre-like keywords
+        genre_keywords = [
+            'rock', 'pop', 'metal', 'jazz', 'blues', 'country', 'electronic', 
+            'hip hop', 'rap', 'classical', 'folk', 'punk', 'reggae', 'r&b', 
+            'soul', 'funk', 'disco', 'indie', 'alternative', 'grunge', 'emo',
+            'hardcore', 'death', 'black', 'thrash', 'progressive',
+            'ambient', 'techno', 'house', 'dubstep', 'trance', 'drum', 'bass',
+            'gothic', 'power', 'symphonic', 'doom', 'nu metal', 'metalcore',
+            'psychedelic', 'post-rock', 'shoegaze', 'slowcore', 'noise',
+            'industrial', 'experimental', 'avant-garde', 'drone'
+        ]
+        
+        fallback_genres = []
+        for tag in sorted_tags[:10]:  # Check top 10 tags
+            tag_name = tag.get('name', '').lower().strip()
+            if any(keyword in tag_name for keyword in genre_keywords):
+                # Try to normalize to our genre system
+                normalized = normalize_genre([tag_name])
+                if normalized and normalized != "abstract":
+                    if normalized not in fallback_genres:
+                        fallback_genres.append(normalized)
+        
+        if fallback_genres:
+            print(f"🎵 MusicBrainz genres (fallback) for '{found_artist_name}': {fallback_genres}", file=sys.stderr)
+            cache[cache_key] = fallback_genres
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return fallback_genres
+        
+        print(f"⚠️  No genre-like tags found for '{found_artist_name}' in MusicBrainz", file=sys.stderr)
+        cache[cache_key] = "abstract"
+        with open(cache_file, "w") as f:
+            json.dump(cache, f)
+        return None
             
     except requests.exceptions.RequestException as e:
         print(f"❌ MusicBrainz API request error: {e}", file=sys.stderr)
