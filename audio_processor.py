@@ -1800,7 +1800,7 @@ def main(regenerate=False, fixed_seed=None, duration=None):
             # Step 3: Generate prompt for image generation
             step_start = time.time()
             print("Step 3: Generating prompt for image generation...")
-            prompt, negative_prompt = audio_to_prompt(features, band_name=band, song_title=song)
+            prompt, negative_prompt = audio_to_prompt_v3(features, band_name=band, song_title=song, raw_genres=None)
             step_time = time.time() - step_start
             step_times['Prompt Generation'] = step_time
             print(f"\n{'='*60}")
