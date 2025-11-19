@@ -1408,12 +1408,14 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         lighting = "cinematic glow"
     
     # === MOTION - ADJUSTED ===
-    if tempo > 150 and rhythm_stability < 0.5:  # Lowered from 160
+    if tempo > 150 and rhythm_stability < 0.5:
         motion = "explosive chaos"
-    elif tempo > 150 and rhythm_stability > 0.6:  # Lowered from 160
+    elif tempo > 150 and rhythm_stability > 0.6:
         motion = "relentless drive"
-    elif tempo > 130 and energy > 0.5:  # NEW: fast + energetic
+    elif tempo > 120 and energy > 0.7:  # NEW: medium-fast + high energy
         motion = "aggressive rhythmic force"
+    elif tempo > 130 and energy > 0.5:
+        motion = "dynamic rhythmic drive"
     elif tempo < 80:
         motion = "glacial weight"
     elif rhythm_stability < 0.4:
