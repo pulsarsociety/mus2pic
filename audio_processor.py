@@ -488,7 +488,7 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
                 print(f"  Search failed for '{search_term}': {e}", file=sys.stderr)
                 return None, 0, None
         
-        # === STRATEGY 1: Try extracted "band" as artist ===
+        # === STRATEGY 1: Try extracted "band" as artist (ONLY STRATEGY) ===
         print(f"🔍 Strategy 1: Trying '{cleaned_band}' as artist", file=sys.stderr)
         match1, score1, name1 = search_artist_with_scoring(cleaned_band)
         if match1:
@@ -497,104 +497,18 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
             search_method = f"band as artist (score: {score1})"
             print(f"✓ Found: {found_artist_name} (score: {score1})", file=sys.stderr)
         
-        # === STRATEGY 2: Try extracted "song" as artist (in case of swap) ===
-        # Skip this if user has already verified the values (skip_swap_detection=True)
-        if cleaned_song and not skip_swap_detection:
-            print(f"🔍 Strategy 2: Trying '{cleaned_song}' as artist (possible swap)", file=sys.stderr)
-            match2, score2, name2 = search_artist_with_scoring(cleaned_song)
-            if match2:
-                # If song as artist has better score, use it (swap detected)
-                # When scores are equal, prefer band match (more reliable)
-                if not artist_id or (score2 > score1):
-                    artist_id = match2['id']
-                    found_artist_name = name2
-                    search_method = f"song as artist - SWAP DETECTED (score: {score2})"
-                    print(f"✓ SWAP DETECTED! Found: {found_artist_name} (score: {score2})", file=sys.stderr)
-                else:
-                    print(f"  Found '{name2}' but band match was better (score: {score2} vs {score1})", file=sys.stderr)
-        elif skip_swap_detection:
-            print(f"⏭️  Skipping swap detection (user-verified values)", file=sys.stderr)
-        
-        # === STRATEGY 3: Track + Artist search ===
-        if not artist_id and cleaned_song:
-            print(f"🔍 Strategy 3: Searching track '{cleaned_song}' by '{cleaned_band}'", file=sys.stderr)
-            try:
-                results = sp.search(q=f"track:{cleaned_song} artist:{cleaned_band}", type='track', limit=5)
-                if results['tracks']['items']:
-                    # Pick the result with most matching artist name
-                    best_match = None
-                    best_score = 0
-                    for track in results['tracks']['items']:
-                        for artist in track['artists']:
-                            # Simple fuzzy match
-                            artist_lower = artist['name'].lower()
-                            band_lower = cleaned_band.lower()
-                            if band_lower in artist_lower or artist_lower in band_lower:
-                                score = len(set(band_lower.split()) & set(artist_lower.split()))
-                                if score > best_score:
-                                    best_score = score
-                                    best_match = artist
-                    
-                    if best_match:
-                        artist_id = best_match['id']
-                        found_artist_name = best_match['name']
-                        search_method = "track+artist search"
-                        print(f"✓ Found: {found_artist_name}", file=sys.stderr)
-                    else:
-                        # Just take first result
-                        artist_id = results['tracks']['items'][0]['artists'][0]['id']
-                        found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
-                        search_method = "track search (first result)"
-                        print(f"⚠️  Using first result: {found_artist_name}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Strategy 3 failed: {e}", file=sys.stderr)
-        
-        # === STRATEGY 4: Generic track search ===
+        # === GIVE UP ON SPOTIFY IF STRATEGY 1 FAILS ===
         if not artist_id:
-            print(f"🔍 Strategy 4: Generic track search '{cleaned_band}'", file=sys.stderr)
-            try:
-                results = sp.search(q=cleaned_band, type='track', limit=1)
-                if results['tracks']['items']:
-                    artist_id = results['tracks']['items'][0]['artists'][0]['id']
-                    found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
-                    search_method = "generic track search"
-                    print(f"✓ Found: {found_artist_name}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Strategy 4 failed: {e}", file=sys.stderr)
-        
-        # === STRATEGY 5: Combined search (both terms together) ===
-        if not artist_id and cleaned_song:
-            combined = f"{cleaned_band} {cleaned_song}"
-            print(f"🔍 Strategy 5: Combined search '{combined}'", file=sys.stderr)
-            try:
-                results = sp.search(q=combined, type='track', limit=1)
-                if results['tracks']['items']:
-                    artist_id = results['tracks']['items'][0]['artists'][0]['id']
-                    found_artist_name = results['tracks']['items'][0]['artists'][0]['name']
-                    search_method = "combined search"
-                    print(f"✓ Found: {found_artist_name}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Strategy 5 failed: {e}", file=sys.stderr)
-        
-        # === STRATEGY 6: Try original uncleaned names ===
-        if not artist_id and cleaned_band != band_name:
-            print(f"🔍 Strategy 6: Trying original name '{band_name}'", file=sys.stderr)
-            try:
-                results = sp.search(q=f"artist:{band_name}", type='artist', limit=1)
-                if results['artists']['items']:
-                    artist_id = results['artists']['items'][0]['id']
-                    found_artist_name = results['artists']['items'][0]['name']
-                    search_method = "original name (uncleaned)"
-                    print(f"✓ Found: {found_artist_name}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Strategy 6 failed: {e}", file=sys.stderr)
-        
-        # === GIVE UP ===
-        if not artist_id:
+            print(f"❌ No artist found in Spotify (Strategy 1 failed) for '{band_name}'", file=sys.stderr)
+            # Try MusicBrainz as fallback
+            print(f"🔄 Falling back to MusicBrainz API...", file=sys.stderr)
+            musicbrainz_genres = get_genre_from_musicbrainz(band_name, cache_file=cache_file)
+            if musicbrainz_genres:
+                return musicbrainz_genres
+            # Cache as abstract if both fail
             cache[cache_key] = "abstract"
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
-            print(f"❌ No artist found after all strategies for '{band_name}'", file=sys.stderr)
             return None
         
         # === GET GENRES ===
@@ -604,22 +518,182 @@ def get_genre_from_spotify(band_name, song_title=None, cache_file="genre_cache.j
         if raw_genres:
             print(f"🎵 Spotify genres for '{found_artist_name}': {raw_genres} (via {search_method})", file=sys.stderr)
             cache[cache_key] = raw_genres
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return raw_genres
         else:
-            print(f"⚠️  No genres for '{found_artist_name}' (via {search_method})", file=sys.stderr)
+            print(f"⚠️  No genres for '{found_artist_name}' in Spotify (via {search_method})", file=sys.stderr)
+            # Try MusicBrainz as fallback when Spotify has no genres
+            print(f"🔄 Falling back to MusicBrainz API...", file=sys.stderr)
+            musicbrainz_genres = get_genre_from_musicbrainz(band_name, cache_file=cache_file)
+            if musicbrainz_genres:
+                return musicbrainz_genres
+            # Cache as abstract if both fail
             cache[cache_key] = "abstract"
-        
-        with open(cache_file, "w") as f:
-            json.dump(cache, f)
-        
-        return raw_genres if raw_genres else None
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return None
         
     except Exception as e:
         print(f"❌ Spotify API error: {e}", file=sys.stderr)
+        # Try MusicBrainz as fallback
+        print(f"🔄 Falling back to MusicBrainz API...", file=sys.stderr)
+        musicbrainz_genres = get_genre_from_musicbrainz(band_name, cache_file=cache_file)
+        if musicbrainz_genres:
+            return musicbrainz_genres
         # Cache key is just band name
         cache_key = band_name.lower().strip()
         cache[cache_key] = "abstract"
         with open(cache_file, "w") as f:
             json.dump(cache, f)
+        return None
+
+def get_genre_from_musicbrainz(band_name, cache_file="genre_cache.json"):
+    """
+    Get genres from MusicBrainz API as fallback when Spotify fails.
+    Uses the same cache format as Spotify genres.
+    
+    Args:
+        band_name: Artist/band name to search for
+        cache_file: Cache file path (same as Spotify cache)
+    
+    Returns:
+        List of genres or None if not found
+    """
+    if not REQUESTS_AVAILABLE:
+        return None
+    
+    # --- Load cache (same file as Spotify) ---
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                cache = json.load(f)
+        except:
+            cache = {}
+    else:
+        cache = {}
+    
+    # Cache key is just the band name (same as Spotify)
+    cache_key = band_name.lower().strip()
+    
+    # Check cache first - if we already have genres (from Spotify or MusicBrainz), return them
+    if cache_key in cache:
+        cached = cache[cache_key]
+        if cached and cached != "abstract":
+            if isinstance(cached, list) and cached:
+                print(f"🎵 MusicBrainz genres (cached): {cached}", file=sys.stderr)
+            return cached if cached != "abstract" else None
+        # If cached as "abstract", don't try again
+        return None
+    
+    try:
+        # MusicBrainz API endpoint
+        base_url = "https://musicbrainz.org/ws/2"
+        headers = {
+            'User-Agent': 'mus2pic/1.0 (https://github.com/yourusername/mus2pic)',
+            'Accept': 'application/json'
+        }
+        
+        # Rate limiting: max 1 request per second
+        time.sleep(1.1)  # Be safe, wait 1.1 seconds
+        
+        # Search for artist
+        search_url = f"{base_url}/artist"
+        params = {
+            'query': f'artist:"{band_name}"',
+            'limit': 5,
+            'fmt': 'json'
+        }
+        
+        response = requests.get(search_url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        artists = data.get('artists', [])
+        
+        if not artists:
+            print(f"⚠️  No artist found in MusicBrainz for '{band_name}'", file=sys.stderr)
+            cache[cache_key] = "abstract"
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return None
+        
+        # Find best matching artist (exact match preferred)
+        best_artist = None
+        search_lower = band_name.lower().strip()
+        
+        for artist in artists:
+            artist_name = artist.get('name', '').lower().strip()
+            if artist_name == search_lower:
+                best_artist = artist
+                break
+        
+        # If no exact match, use first result
+        if not best_artist:
+            best_artist = artists[0]
+        
+        artist_mbid = best_artist.get('id')
+        found_artist_name = best_artist.get('name', band_name)
+        
+        if not artist_mbid:
+            print(f"⚠️  No MBID found for '{found_artist_name}'", file=sys.stderr)
+            cache[cache_key] = "abstract"
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return None
+        
+        # Rate limiting: wait before lookup
+        time.sleep(1.1)
+        
+        # Lookup artist details with tags (tags often contain genres)
+        lookup_url = f"{base_url}/artist/{artist_mbid}"
+        params = {
+            'inc': 'tags',
+            'fmt': 'json'
+        }
+        
+        response = requests.get(lookup_url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        
+        artist_data = response.json()
+        
+        # Extract tags (MusicBrainz uses tags for genres)
+        tags = artist_data.get('tags', [])
+        genres = []
+        
+        # Get tags with count > 0 (more reliable)
+        for tag in tags:
+            tag_name = tag.get('name', '').lower().strip()
+            count = tag.get('count', 0)
+            if tag_name and count > 0:
+                genres.append(tag_name)
+        
+        # If no tags, try to get from disambiguation or aliases
+        if not genres:
+            # Check for genre-like information in other fields
+            disambiguation = artist_data.get('disambiguation', '')
+            if disambiguation:
+                # Sometimes genre info is in disambiguation
+                pass
+        
+        if genres:
+            print(f"🎵 MusicBrainz genres for '{found_artist_name}': {genres}", file=sys.stderr)
+            cache[cache_key] = genres
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return genres
+        else:
+            print(f"⚠️  No genres/tags found for '{found_artist_name}' in MusicBrainz", file=sys.stderr)
+            cache[cache_key] = "abstract"
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+            return None
+            
+    except requests.exceptions.RequestException as e:
+        print(f"❌ MusicBrainz API request error: {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"❌ MusicBrainz API error: {e}", file=sys.stderr)
         return None
 
 def infer_genre_from_features(features):
@@ -1222,165 +1296,46 @@ def analyze_audio(audio_path, duration=None, offset=5.0):
             print(f"   {key}: {type(value).__name__} = {value}", file=sys.stderr)
     
     return result
-
-def audio_to_prompt(features, band_name=None, song_title=None, enable_variation=False):
-    tempo = features.get('tempo', 120)
-    energy = features.get('energy', 0.5)
-    spectral_centroid = features.get('spectral_centroid', 3000)
-    mode = features.get('mode', 'major')
-    valence = features.get('valence', 0.5)
-    danceability = features.get('danceability', 0.5)
-    instrumentalness = features.get('instrumentalness', 0.5)
-    rhythm_stability = features.get('rhythm_stability', 0.5)
-
-    # --- Composition ---
-    if tempo > 140:
-        composition = "chaotic energetic asymmetry"
-    elif tempo > 110:
-        composition = "dynamic rhythmic motion"
-    elif tempo > 90:
-        composition = "flowing balanced symmetry"
-    else:
-        composition = "minimal serene centered"
-
-    # --- Colors ---
-    if energy > 0.7:
-        colors = "vivid neon high contrast"
-    elif energy > 0.4:
-        colors = "rich warm tones"
-    else:
-        colors = "pastel muted soft"
-
-    # --- Mood ---
-    if valence > 0.7:
-        mood = "euphoric uplifting"
-    elif valence > 0.4:
-        mood = "nostalgic introspective"
-    else:
-        mood = "dark mysterious"
-
-    # --- Texture ---
-    if spectral_centroid > 5000:
-        texture = "sharp crystalline detail"
-    elif spectral_centroid > 2500:
-        texture = "smooth modern surface"
-    else:
-        texture = "soft atmospheric haze"
-
-    # --- Style ---
-    style = "geometric" if mode == "major" else "organic"
-
-    # --- Rhythm ---
-    rhythm = "structured repetition" if rhythm_stability > 0.6 else "fluid motion"
-
-    # --- Lighting ---
-    if energy > 0.7 and valence < 0.4:
-        lighting = "harsh contrast red-blue glow"
-    elif valence > 0.7:
-        lighting = "bright golden light"
-    else:
-        lighting = "dim ambient shadows"
-
-    # --- Theme (genre-like mood fusion) ---
-    if instrumentalness > 0.7 and energy < 0.5:
-        theme = "ambient cinematic depth"
-    elif energy > 0.8 and valence < 0.4:
-        theme = "chaotic aggression and tension"
-    elif valence > 0.7 and danceability > 0.6:
-        theme = "playful rhythmic geometry"
-    else:
-        theme = "atmospheric emotional balance"
-
-    # --- Band style memory (simple dictionary hook) ---
-    band_styles = {
-        "Brutus": "stormy lighting, shattered textures, crimson-blue tones",
-        "Her Last Sight": "futuristic decay, neon shards, metallic reflections"
-    }
-    style_hint = band_styles.get(band_name, "")
-
-    # --- Optional variation ---
-    if enable_variation:
-        color_mods = ["vivid", "intense", "dynamic", "saturated"]
-        comp_mods = ["asymmetry", "rhythmic design", "visual pulse"]
-        colors = f"{random.choice(color_mods)} colors"
-        composition = f"{random.choice(comp_mods)} composition"
-
-    # --- Context tags ---
-    band_tag = f"inspired by the music of {band_name}" if band_name else ""
-    song_tag = f"titled '{song_title}'" if song_title else ""
-
-    # --- Final prompt (weighted hierarchy) ---
-    prompt = (
-        f"music-inspired abstract art poster, {theme}, {composition}, "
-        f"{colors}, {mood}, {texture}, {style} shapes, {rhythm}, "
-        f"{lighting}, {style_hint}, {band_tag}, {song_tag}, "
-        f"modern design, cinematic lighting, detailed, high quality"
-    )
-
-    # --- Negative prompt ---
-    negative_prompt = (
-        "text, logo, watermark, words, lowres, jpeg artifacts, cropped, "
-        "collage, grain, border, frame, blurry, distorted face, "
-        "unfocused, overexposed, underexposed, duplicate, noisy, deformed"
-    )
-
-    return prompt.strip(), negative_prompt.strip()
-
 def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=None):
     """
-    SDXL-TURBO OPTIMIZED: Concise, high-impact prompts under 77 tokens.
-    Handles missing genre gracefully.
+    ENHANCED: Genre-specific visual languages with token budget optimization.
     """
     
     genre_hint = normalize_genre(raw_genres) if raw_genres else "abstract"
     genre_key = genre_hint.lower()
-    has_genre = (genre_hint != "abstract")  # Flag to check if we have real genre
+    has_genre = (genre_hint != "abstract")
     
-    # Extract features and ensure they're native Python types (not numpy)
-    def safe_float(value, default):
-        """Safely convert value to float, handling numpy types."""
-        if value is None:
-            return default
-        if isinstance(value, (np.integer, np.floating)):
-            return float(value)
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
-    
-    tempo = safe_float(features.get("tempo"), 120)
-    energy = safe_float(features.get("energy"), 0.5)
-    brightness = safe_float(features.get("spectral_centroid"), 3000)
-    rolloff = safe_float(features.get("spectral_rolloff"), 5000)
-    bandwidth = safe_float(features.get("spectral_bandwidth"), 2000)
-    contrast = safe_float(features.get("spectral_contrast"), 20)
-    zcr = safe_float(features.get("zcr"), 0.1)
-    chroma_std = safe_float(features.get("chroma_std"), 0.3)
-    rhythm_stability = safe_float(features.get("rhythm_stability"), 0.5)
-    harmonicity = safe_float(features.get("harmonicity"), 0.5)
-    
-    # Values are already converted by safe_float, but ensure they're native types for formatting
-    tempo_safe = float(tempo)
-    energy_safe = float(energy)
-    brightness_safe = float(brightness)
-    harmonicity_safe = float(harmonicity)
-    rhythm_stability_safe = float(rhythm_stability)
+    # Extract features (keep as is)
+    tempo = features.get("tempo", 120)
+    energy = features.get("energy", 0.5)
+    brightness = features.get("spectral_centroid", 3000)
+    rolloff = features.get("spectral_rolloff", 5000)
+    bandwidth = features.get("spectral_bandwidth", 2000)
+    contrast = features.get("spectral_contrast", 20)
+    zcr = features.get("zcr", 0.1)
+    chroma_std = features.get("chroma_std", 0.3)
+    rhythm_stability = features.get("rhythm_stability", 0.5)
+    harmonicity = features.get("harmonicity", 0.5)
     
     print(f"\n🎵 Audio Features Extracted:", file=sys.stderr)
-    print(f"   Tempo: {tempo_safe:.1f} BPM", file=sys.stderr)
-    print(f"   Energy: {energy_safe:.3f}", file=sys.stderr)
-    print(f"   Brightness: {brightness_safe:.1f} Hz", file=sys.stderr)
-    print(f"   Harmonicity: {harmonicity_safe:.3f}", file=sys.stderr)
-    print(f"   Rhythm Stability: {rhythm_stability_safe:.3f}", file=sys.stderr)
+    print(f"   Tempo: {tempo:.1f} BPM", file=sys.stderr)
+    print(f"   Energy: {energy:.3f}", file=sys.stderr)
+    print(f"   Brightness: {brightness:.1f} Hz", file=sys.stderr)
+    print(f"   Harmonicity: {harmonicity:.3f}", file=sys.stderr)
+    print(f"   Rhythm Stability: {rhythm_stability:.3f}", file=sys.stderr)
     
-    # === MOOD - ADJUSTED THRESHOLDS ===
-    # Consider genre context for mood
+    # Genre categories for visual treatment
     is_metal = "metal" in genre_key
-    is_aggressive_genre = any(x in genre_key for x in ["metal", "punk", "hardcore", "thrash"])
+    is_aggressive = any(x in genre_key for x in ["metal", "punk", "hardcore", "grunge"])
+    is_electronic = any(x in genre_key for x in ["electronic", "techno", "edm", "house", "synthpop"])
+    is_jazz = "jazz" in genre_key or "blues" in genre_key
+    is_ambient = any(x in genre_key for x in ["ambient", "drone", "post-rock"])
+    is_classical = any(x in genre_key for x in ["classical", "orchestral", "opera"])
     
-    if chroma_std < 0.2 and energy > 0.55:  # Lowered from 0.6
+    # === MOOD (keep existing logic) ===
+    if chroma_std < 0.2 and energy > 0.55:
         mood = "aggressive intensity"
-    elif energy > 0.55 and tempo > 140 and is_aggressive_genre:  # NEW: genre-aware aggression
+    elif energy > 0.55 and tempo > 140 and is_aggressive:
         mood = "explosive power"
     elif chroma_std > 0.4 and harmonicity > 0.6:
         mood = "complex emotional depth"
@@ -1390,29 +1345,29 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         mood = "melancholic"
     elif energy < 0.25:
         mood = "meditative calm"
-    elif harmonicity > 0.65 and energy > 0.45:  # Lowered from 0.7 and 0.5
+    elif harmonicity > 0.65 and energy > 0.45:
         mood = "euphoric power"
     else:
         mood = "introspective"
     
-    # === LIGHTING - ADJUSTED ===
+    # === LIGHTING (keep existing) ===
     if rolloff > 7000 and brightness > 4000:
         lighting = "sharp bright contrast"
     elif rolloff < 3000 and brightness < 2000:
         lighting = "deep shadows"
     elif contrast > 25:
         lighting = "dramatic chiaroscuro"
-    elif energy > 0.6:  # NEW: high energy = dramatic lighting
+    elif energy > 0.6:
         lighting = "bold dramatic lighting"
     else:
         lighting = "cinematic glow"
     
-    # === MOTION - ADJUSTED ===
+    # === MOTION (improved) ===
     if tempo > 150 and rhythm_stability < 0.5:
         motion = "explosive chaos"
     elif tempo > 150 and rhythm_stability > 0.6:
         motion = "relentless drive"
-    elif tempo > 120 and energy > 0.7:  # NEW: medium-fast + high energy
+    elif tempo > 120 and energy > 0.7:
         motion = "aggressive rhythmic force"
     elif tempo > 130 and energy > 0.5:
         motion = "dynamic rhythmic drive"
@@ -1423,20 +1378,10 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     else:
         motion = "rhythmic pulse"
     
-    # === COMPOSITION - ADJUSTED ===
-    if energy < 0.25:
-        composition = "minimal centered"
-    elif energy > 0.55 and tempo > 140:  # Lowered from 0.7, NEW tempo check
-        composition = "explosive asymmetric"
-    elif energy > 0.5:  # NEW: medium-high energy
-        composition = "dynamic bold arrangement"
-    else:
-        composition = "balanced depth"
-    
-    # === COLORS - ADJUSTED ===
+    # === COLORS (keep existing) ===
     if energy > 0.65 and brightness > 4000:
         colors = "neon electric"
-    elif energy > 0.55 and is_metal:  # NEW: metal gets bold colors
+    elif energy > 0.55 and is_metal:
         colors = "bold saturated"
     elif brightness < 2000 and energy < 0.4:
         colors = "dark muted"
@@ -1445,9 +1390,18 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     else:
         colors = "atmospheric gradient"
     
-    # GENRE FLAVOR - MUCH shorter variants
+    # === COMPOSITION (keep existing) ===
+    if energy < 0.25:
+        composition = "minimal centered"
+    elif energy > 0.55 and tempo > 140:
+        composition = "explosive asymmetric"
+    elif energy > 0.5:
+        composition = "dynamic bold arrangement"
+    else:
+        composition = "balanced depth"
+    
+    # === GENRE FLAVORS (your existing dict - keep it) ===
     genre_flavors = {
-        # Metal
         "symphonic metal": ["orchestral storm", "cathedral grandeur", "epic layers", "celestial power"],
         "progressive metal": ["fractal geometry", "cosmic drift", "technical precision", "astral minimal"],
         "gothic metal": ["romantic darkness", "velvet decay", "baroque shadows", "somber ritual"],
@@ -1460,8 +1414,6 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "thrash metal": ["relentless aggression", "speed violence", "razor precision", "raw power"],
         "nu metal": ["urban chaos", "digital rage", "industrial angst", "modern brutality"],
         "metal": ["heavy force", "dark power", "aggressive weight", "metallic drive"],
-        
-        # Rock
         "post-rock": ["cathartic crescendo", "infinite horizon", "narrative journey", "minimal beauty"],
         "psychedelic rock": ["kaleidoscopic", "dreamy dissolution", "recursive patterns", "color distortion"],
         "progressive rock": ["technical mastery", "conceptual meditation", "structured epic", "retro-futurist"],
@@ -1472,8 +1424,6 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "punk rock": ["anarchic fury", "quiet resistance", "political message", "raw defiance"],
         "hard rock": ["amplified aggression", "heavy contemplation", "layered riffs", "pure force"],
         "rock": ["electric energy", "driving rhythm", "guitar power", "raw sound"],
-        
-        # Jazz
         "free jazz": ["chaotic improvisation", "spontaneous freedom", "abstract expression", "wild energy"],
         "fusion": ["hybrid complexity", "electric sophistication", "groove synthesis", "technical flow"],
         "bebop": ["rapid complexity", "harmonic adventure", "virtuosic speed", "jazz essence"],
@@ -1482,14 +1432,10 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "jazz funk": ["syncopated groove", "electric soul", "rhythmic fusion", "funky sophistication"],
         "contemporary jazz": ["modern elegance", "evolved tradition", "fresh sophistication", "current expression"],
         "jazz": ["swing sophistication", "improvisational flow", "blue note mood", "syncopated elegance"],
-        
-        # Blues
         "delta blues": ["raw authenticity", "rural soul", "acoustic pain", "roots essence"],
         "electric blues": ["amplified emotion", "urban grit", "powerful bends", "electric soul"],
         "blues rock": ["guitar fury", "rock intensity", "blues power", "electric passion"],
         "blues": ["deep feeling", "soulful pain", "twelve-bar truth", "emotional depth"],
-        
-        # Soul / R&B / Funk
         "neo soul": ["modern warmth", "contemporary soul", "smooth evolution", "refined emotion"],
         "funk": ["syncopated groove", "tight pocket", "rhythmic punch", "percussive soul"],
         "soul": ["emotional depth", "vocal power", "heartfelt expression", "pure feeling"],
@@ -1497,16 +1443,12 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "rhythm and blues": ["soulful rhythm", "emotional groove", "classic feel", "heartfelt beats"],
         "motown": ["polished soul", "pop elegance", "Detroit sound", "classic groove"],
         "disco": ["mirror ball energy", "dance euphoria", "funky glamour", "groove celebration"],
-        
-        # Hip-Hop / Rap
         "conscious hip hop": ["lyrical depth", "social awareness", "intellectual flow", "message power"],
         "trap": ["heavy 808s", "hi-hat rolls", "dark atmosphere", "southern sound"],
         "boom bap": ["classic drums", "sample soul", "90s essence", "golden era"],
         "gangsta rap": ["street reality", "raw narrative", "west coast sound", "hard truth"],
         "hip hop": ["rhythmic flow", "urban poetry", "breakbeat soul", "street culture"],
         "rap": ["verbal dexterity", "rhythmic speech", "lyrical prowess", "flow mastery"],
-        
-        # Electronic / EDM
         "synthpop": ["digital ecstasy", "retro glow", "layered synthesis", "clean digital"],
         "electropop": ["neon pop", "electronic hooks", "synthetic charm", "digital pop"],
         "techno": ["relentless machine", "hypnotic loop", "modular precision", "raw rhythm"],
@@ -1516,49 +1458,36 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         "dubstep": ["wobble bass", "half-time power", "sub frequency", "bass aggression"],
         "edm": ["festival explosion", "gentle pulse", "drop architecture", "pure kick"],
         "electronic": ["cybernetic pulse", "ambient circuitry", "algorithmic depth", "pure waveform"],
-        
-        # Pop
         "dance pop": ["infectious energy", "club euphoria", "pop hooks", "dance floor"],
         "indie pop": ["quirky charm", "DIY sophistication", "bedroom production", "alternative hooks"],
         "pop": ["euphoric celebration", "soft intimacy", "polished perfection", "pure hooks"],
-        
-        # Country / Folk
         "folk rock": ["electrified roots", "pastoral calm", "narrative weaving", "folk honesty"],
         "americana": ["rootsy authenticity", "heartland soul", "storytelling tradition", "rural poetry"],
         "bluegrass": ["acoustic virtuosity", "mountain harmony", "rapid picking", "traditional roots"],
         "country": ["heartland stories", "twang emotion", "rural authenticity", "Nashville sound"],
         "folk": ["dancing tradition", "fireside storytelling", "cultural tapestry", "acoustic purity"],
-        
-        # World / Regional
         "afrobeat": ["polyrhythmic power", "funk fusion", "political groove", "African pulse"],
         "reggae": ["island rhythm", "offbeat groove", "roots vibration", "Caribbean soul"],
         "latin": ["rhythmic passion", "tropical heat", "dance culture", "Latin fire"],
         "world": ["cultural fusion", "global rhythm", "ethnic texture", "world sound"],
         "bossa nova": ["cool sophistication", "Brazilian elegance", "jazz samba", "tropical smooth"],
         "flamenco": ["passionate drama", "Spanish fire", "guitar intensity", "emotional dance"],
-        
-        # Classical / Orchestral
         "contemporary classical": ["modern composition", "evolved tradition", "experimental orchestration", "current classical"],
         "orchestral": ["symphonic grandeur", "instrumental power", "ensemble majesty", "orchestral sweep"],
         "classical": ["timeless elegance", "formal beauty", "compositional mastery", "refined tradition"],
         "opera": ["dramatic vocals", "theatrical grandeur", "emotional intensity", "vocal drama"],
         "baroque": ["ornate complexity", "period elegance", "contrapuntal beauty", "historical richness"],
-        
-        # Experimental / Ambient
         "avant-garde": ["boundary breaking", "experimental edge", "unconventional form", "artistic risk"],
         "experimental": ["sonic exploration", "unconventional structure", "pushing boundaries", "artistic innovation"],
         "ambient": ["cosmic stillness", "void meditation", "layered dimensions", "pure frequency"],
         "drone": ["sustained tones", "minimal evolution", "meditative hum", "sonic persistence"],
         "noise": ["textural chaos", "anti-musical", "sonic assault", "pure sound"],
         "industrial": ["mechanical aggression", "factory rhythm", "harsh electronics", "dystopian sound"],
-        
-        # Other
         "slowcore": ["glacial patience", "minimal emotion", "sparse beauty", "slow burn"],
         "shoegaze": ["guitar wash", "dreamy noise", "reverb depth", "wall of sound"],
         "emo": ["emotional intensity", "confessional lyrics", "melodic angst", "heartfelt pain"],
         "ska": ["upbeat offbeat", "horn section", "bouncing rhythm", "Caribbean punk"],
         "gospel": ["spiritual power", "choir majesty", "religious fervor", "vocal testimony"],
-        
         "abstract": ["flowing forms", "ethereal shapes", "pure expression", "sonic essence"],
     }
     
@@ -1573,44 +1502,191 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
     else:
         flavor = flavors[3]
     
+    # ==========================================
+    # NEW: GENRE-SPECIFIC VISUAL VOCABULARIES
+    # ==========================================
+    
+    # Define visual elements by genre category
+    if is_metal:
+        visual_elements = [
+            "fractured shards",
+            "angular brutality",
+            "jagged spikes",
+            "shattered crystalline forms",
+            "apocalyptic architecture"
+        ]
+        texture_style = [
+            "corroded metal texture",
+            "industrial decay",
+            "rough brutal surfaces",
+            "distressed materials"
+        ]
+        atmosphere = [
+            "smoke and ash",
+            "forge fire glow",
+            "volcanic atmosphere",
+            "storm clouds"
+        ]
+    
+    elif is_electronic:
+        visual_elements = [
+            "geometric circuitry",
+            "digital grid patterns",
+            "wireframe structures",
+            "holographic forms",
+            "cybernetic shapes"
+        ]
+        texture_style = [
+            "neon glow edges",
+            "pixelated gradients",
+            "chrome reflections",
+            "LED light trails"
+        ]
+        atmosphere = [
+            "digital fog",
+            "laser beams",
+            "data streams",
+            "electric haze"
+        ]
+    
+    elif is_jazz:
+        visual_elements = [
+            "fluid organic curves",
+            "improvisational shapes",
+            "syncopated patterns",
+            "abstract instrumental forms",
+            "flowing silhouettes"
+        ]
+        texture_style = [
+            "smoky gradients",
+            "brushstroke texture",
+            "vinyl grain",
+            "liquid ink flow"
+        ]
+        atmosphere = [
+            "dimmed stage lighting",
+            "spotlight beams",
+            "cigarette smoke haze",
+            "intimate club ambiance"
+        ]
+    
+    elif is_ambient:
+        visual_elements = [
+            "floating particles",
+            "ethereal wisps",
+            "nebula clouds",
+            "infinite space",
+            "weightless forms"
+        ]
+        texture_style = [
+            "soft diffusion",
+            "translucent layers",
+            "gaussian blur",
+            "gossamer fabric"
+        ]
+        atmosphere = [
+            "cosmic void",
+            "celestial mist",
+            "aurora shimmer",
+            "endless depth"
+        ]
+    
+    elif is_classical:
+        visual_elements = [
+            "ornate scrollwork",
+            "architectural columns",
+            "baroque flourishes",
+            "symmetrical mandala",
+            "elegant filigree"
+        ]
+        texture_style = [
+            "gold leaf accents",
+            "marble surfaces",
+            "velvet richness",
+            "aged parchment"
+        ]
+        atmosphere = [
+            "concert hall lighting",
+            "chandelier glow",
+            "theatrical curtains",
+            "cathedral rays"
+        ]
+    
+    else:  # Default/Rock/Pop
+        visual_elements = [
+            "abstract geometric forms",
+            "dynamic shapes",
+            "flowing patterns",
+            "symbolic imagery",
+            "expressive marks"
+        ]
+        texture_style = [
+            "screen-print texture",
+            "poster grain",
+            "spray paint effects",
+            "analog warmth"
+        ]
+        atmosphere = [
+            "volumetric depth",
+            "atmospheric haze",
+            "stage lighting",
+            "cinematic mood"
+        ]
+    
+    # Select specific elements based on features
+    if energy > 0.7:
+        visual_elem = visual_elements[0] if len(visual_elements) > 0 else "dynamic forms"
+        texture = texture_style[0] if len(texture_style) > 0 else "textured surface"
+    elif energy < 0.3:
+        visual_elem = visual_elements[1] if len(visual_elements) > 1 else "minimal shapes"
+        texture = texture_style[-1] if len(texture_style) > 0 else "soft texture"
+    else:
+        visual_elem = visual_elements[2] if len(visual_elements) > 2 else "balanced forms"
+        texture = texture_style[1] if len(texture_style) > 1 else "layered texture"
+    
+    atmo = atmosphere[0] if harmonicity > 0.6 else atmosphere[-1] if len(atmosphere) > 1 else atmosphere[0]
+    
     if has_genre:
         print(f"   Genre: {genre_hint}, Flavor: {flavor}", file=sys.stderr)
+        print(f"   Visual: {visual_elem}, {texture}, {atmo}", file=sys.stderr)
     else:
-        print(f"   No genre found - using feature-driven description: {flavor}", file=sys.stderr)
+        print(f"   No genre - Feature-driven: {flavor}", file=sys.stderr)
     
-    # === PROMPT STRUCTURE ===
+    # ==========================================
+    # FINAL PROMPT CONSTRUCTION
+    # ==========================================
+    
     if has_genre:
         prompt = (
-            f"abstract {genre_hint} music poster, {flavor}, {mood} mood, "
+            f"abstract {genre_hint} poster, {flavor}, {mood}, "
+            f"{visual_elem}, {texture}, {atmo}, "
             f"{lighting}, {motion}, {colors} colors, {composition}, "
-            f"geometric symbolic forms, volumetric depth, no text, no faces, 4K, HIGH QUALITY"
+            f"professional design, no text, no faces"
         )
     else:
         prompt = (
-            f"music poster art, {flavor}, {mood} mood, "
+            f"music poster art, {flavor}, {mood}, "
+            f"{visual_elem}, {texture}, {atmo}, "
             f"{lighting}, {motion}, {colors} colors, {composition}, "
-            f"geometric symbolic forms, volumetric depth, no text, no faces, 4K, HIGH QUALITY"
+            f"professional design, no text, no faces"
         )
     
-    # Negative prompt (barely used in SDXL Turbo, but doesn't hurt)
     negative_prompt = (
         "text, letters, words, watermark, faces, people, portraits, "
         "photo, realistic, messy, blurry, low quality"
     )
     
-    # PROPER token counting - rough estimate by word count
     word_count = len(prompt.split())
-    est_tokens = int(word_count * 1.4)  # Conservative estimate
+    est_tokens = int(word_count * 1.4)
     
     print(f"   Words: {word_count}, Est. tokens: ~{est_tokens}/77", file=sys.stderr)
     
     if est_tokens > 75:
         print(f"   ⚠️  WARNING: Prompt may be too long!", file=sys.stderr)
     
-    print(f"✨ Concise prompt generated\n", file=sys.stderr)
+    print(f"✨ Genre-specific visual prompt generated\n", file=sys.stderr)
     
     return prompt.strip(), negative_prompt.strip()
-
 
 # Hardcoded YouTube URL for testing
 YOUTUBE_URL = 'https://www.youtube.com/watch?v=Sk-geMg8Tyc&list=RDSk-geMg8Tyc'
