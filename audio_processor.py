@@ -1781,14 +1781,14 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
             f"abstract {genre_hint} poster, {flavor}, {mood}, "
             f"{visual_elem}, {texture}, {atmo}, "
             f"{lighting}, {motion}, {colors} colors, {composition}, "
-            f"professional design, no text, no faces"
+            f"professional design, no text, no faces, 4k, high quality"
         )
     else:
         prompt = (
             f"music poster art, {flavor}, {mood}, "
             f"{visual_elem}, {texture}, {atmo}, "
             f"{lighting}, {motion}, {colors} colors, {composition}, "
-            f"professional design, no text, no faces"
+            f"professional design, no text, no faces, 4k, high quality"
         )
     
     negative_prompt = (
@@ -1805,6 +1805,599 @@ def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=Non
         print(f"   ⚠️  WARNING: Prompt may be too long!", file=sys.stderr)
     
     print(f"✨ Genre-specific visual prompt generated\n", file=sys.stderr)
+    
+    return prompt.strip(), negative_prompt.strip()
+
+
+def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=None):
+    """
+    V4: Soul-capturing prompt generator optimized for SDXL Turbo.
+    
+    Key improvements over v3:
+    - Detects emotional valence (major/minor tendency)
+    - Analyzes dynamic arc (building, climax, fading, steady)
+    - Measures tension and density
+    - Uses single evocative scene instead of attribute list
+    - Song-specific variety to avoid repetitive imagery
+    - Shorter, punchier prompts (~30-40 tokens) for Turbo's 4-step limit
+    """
+    
+    # === EXTRACT BASE FEATURES ===
+    tempo = features.get("tempo", 120)
+    energy = features.get("energy", 0.5)
+    brightness = features.get("spectral_centroid", 3000)
+    harmonicity = features.get("harmonicity", 0.5)
+    rhythm_stability = features.get("rhythm_stability", 0.5)
+    chroma_std = features.get("chroma_std", 0.3)
+    spectral_contrast = features.get("spectral_contrast", 20)
+    zcr = features.get("zcr", 0.1)
+    spectral_rolloff = features.get("spectral_rolloff", 5000)
+    spectral_bandwidth = features.get("spectral_bandwidth", 2000)
+    
+    # === NEW: EMOTIONAL VALENCE (Major/Minor tendency) ===
+    # High harmonicity + high brightness tends toward major/bright
+    # Low harmonicity + low brightness tends toward minor/dark
+    # chroma_std indicates harmonic complexity
+    valence_score = (harmonicity * 0.4) + (min(brightness / 5000, 1) * 0.3) + (rhythm_stability * 0.3)
+    is_major = valence_score > 0.55
+    is_minor = valence_score < 0.45
+    is_ambiguous = not is_major and not is_minor
+    
+    # === NEW: TENSION LEVEL ===
+    # High spectral contrast + high zcr + low rhythm stability = tension
+    tension = (spectral_contrast / 40) * 0.4 + (zcr / 0.2) * 0.3 + ((1 - rhythm_stability) * 0.3)
+    tension = min(max(tension, 0), 1)
+    is_tense = tension > 0.6
+    is_relaxed = tension < 0.35
+    
+    # === NEW: DENSITY (sparse vs. full) ===
+    # High bandwidth + high energy = dense
+    # Low bandwidth + low energy = sparse
+    density = (min(spectral_bandwidth / 3000, 1) * 0.5) + (energy * 0.5)
+    is_dense = density > 0.6
+    is_sparse = density < 0.35
+    
+    # === NEW: DYNAMIC ARC (from raw_energy if available, or estimate) ===
+    raw_energy = features.get("raw_energy", energy)
+    # For now, estimate arc from overall characteristics
+    # In future, could analyze segments
+    if energy > 0.7 and tempo > 140:
+        arc = "climactic"
+    elif energy > 0.5 and harmonicity > 0.6:
+        arc = "building"
+    elif energy < 0.3:
+        arc = "floating"
+    else:
+        arc = "steady"
+    
+    # === GENRE DETECTION ===
+    genre_hint = normalize_genre(raw_genres) if raw_genres else "abstract"
+    genre_key = genre_hint.lower()
+    has_genre = (genre_hint != "abstract")
+    
+    # Genre categories
+    is_metal = "metal" in genre_key
+    is_rock = "rock" in genre_key and not is_metal
+    is_electronic = any(x in genre_key for x in ["electronic", "techno", "edm", "house", "synthpop", "trance", "dubstep"])
+    is_ambient = any(x in genre_key for x in ["ambient", "drone", "post-rock", "shoegaze"])
+    is_jazz = "jazz" in genre_key or "blues" in genre_key
+    is_classical = any(x in genre_key for x in ["classical", "orchestral", "opera", "baroque"])
+    is_hiphop = any(x in genre_key for x in ["hip hop", "rap", "trap"])
+    is_folk = any(x in genre_key for x in ["folk", "country", "americana", "bluegrass"])
+    
+    # === SONG-SPECIFIC SEED FOR VARIETY ===
+    # Use song title and band name to create deterministic but varied selection
+    seed_string = f"{band_name or 'unknown'}_{song_title or 'unknown'}_{tempo:.0f}_{energy:.2f}"
+    seed_hash = int(hashlib.md5(seed_string.encode()).hexdigest()[:8], 16)
+    
+    def pick(options):
+        """Pick from options using song-specific seed for variety"""
+        return options[seed_hash % len(options)]
+    
+    print(f"\n🎵 V4 Soul Analysis:", file=sys.stderr)
+    print(f"   Valence: {'major/bright' if is_major else 'minor/dark' if is_minor else 'ambiguous'} ({valence_score:.2f})", file=sys.stderr)
+    print(f"   Tension: {'high' if is_tense else 'low' if is_relaxed else 'moderate'} ({tension:.2f})", file=sys.stderr)
+    print(f"   Density: {'dense' if is_dense else 'sparse' if is_sparse else 'balanced'} ({density:.2f})", file=sys.stderr)
+    print(f"   Arc: {arc}", file=sys.stderr)
+    print(f"   Genre: {genre_hint}", file=sys.stderr)
+    
+    # ==========================================
+    # VISUAL SCENE POOLS (Large variety to avoid repetition)
+    # ==========================================
+    
+    # === METAL SCENES (30+ options) ===
+    metal_scenes = {
+        "intense": [
+            "ancient fortress crumbling under cosmic storm",
+            "obsidian spires rising from molten earth",
+            "shattered cathedral consumed by dark flames",
+            "war machines advancing through ash-covered battlefield",
+            "colossal serpent coiled around dying sun",
+            "iron throne in hall of eternal shadows",
+            "glacier splitting apart revealing abyss below",
+            "army of shadows marching across frozen wasteland",
+            "eclipse over burning ancient city",
+            "storm of blades descending from blood-red sky",
+        ],
+        "dark": [
+            "lone tower on cliff edge under starless sky",
+            "underground cavern with bioluminescent crystals",
+            "abandoned throne room overgrown with thorns",
+            "ghostly ship emerging from fog",
+            "forest of petrified trees under purple moon",
+            "ancient tomb with glowing runes awakening",
+            "frozen waterfall in eternal night",
+            "labyrinth of mirrors reflecting darkness",
+            "mountain pass during supernatural blizzard",
+            "ruins of civilization swallowed by sand",
+        ],
+        "epic": [
+            "dragon silhouette against massive aurora",
+            "giant warrior statue crumbling into ocean",
+            "bridge between two floating mountains",
+            "phoenix rebirth in cosmic fire",
+            "armada of airships in golden sunset storm",
+            "portal opening between dimensions",
+            "titan emerging from volcanic crater",
+            "constellation forming ancient symbol",
+            "eclipse creating ring of fire",
+            "mountain carved into sleeping giant",
+        ],
+    }
+    
+    # === ELECTRONIC SCENES ===
+    electronic_scenes = {
+        "hypnotic": [
+            "infinite corridor of neon light gates",
+            "geometric mandala pulsing in void",
+            "endless grid stretching to glowing horizon",
+            "crystalline structure refracting prismatic light",
+            "spiral staircase descending into digital abyss",
+            "fractal flowers blooming in zero gravity",
+            "kaleidoscope of circuit patterns",
+            "tunnel of rotating geometric shapes",
+            "holographic cityscape reflected in still water",
+            "waveform frozen as sculptural landscape",
+        ],
+        "ethereal": [
+            "aurora borealis over mirrored lake",
+            "clouds of luminescent particles drifting",
+            "moon surface with earth rising",
+            "nebula nursery birthing stars",
+            "bioluminescent ocean at night",
+            "field of glowing dandelions at dusk",
+            "ice caves with internal light",
+            "rain of light through forest canopy",
+            "sunset through crystal prism",
+            "underwater sun rays in clear depths",
+        ],
+        "intense": [
+            "lightning storm inside glass sphere",
+            "explosion frozen at moment of impact",
+            "shockwave rippling through liquid metal",
+            "supernova core in extreme closeup",
+            "plasma streams colliding",
+            "data storm visualized as hurricane",
+            "binary code becoming physical matter",
+            "glitch in reality revealing void beneath",
+            "sound wave destroying glass structures",
+            "electromagnetic pulse captured mid-expansion",
+        ],
+    }
+    
+    # === JAZZ/BLUES SCENES ===
+    jazz_scenes = {
+        "smooth": [
+            "rain on jazz club window at night",
+            "saxophone silhouette against city lights",
+            "smoke trails curling under spotlight",
+            "vinyl record grooves as abstract landscape",
+            "piano keys reflected in whiskey glass",
+            "street lamp halos in evening mist",
+            "neon signs reflected in wet pavement",
+            "candlelit stage with velvet curtains",
+            "moonlight through venetian blinds",
+            "coffee steam rising in morning light",
+        ],
+        "soulful": [
+            "empty stage after the last set",
+            "musician hands on worn instrument",
+            "crossroads at midnight under stars",
+            "train tracks disappearing into fog",
+            "porch light on rural evening",
+            "river delta from above at sunset",
+            "old radio glowing in dim room",
+            "cotton fields under dramatic sky",
+            "juke joint doorway spilling warm light",
+            "delta sunrise over still water",
+        ],
+    }
+    
+    # === CLASSICAL/ORCHESTRAL SCENES ===
+    classical_scenes = {
+        "grand": [
+            "cathedral interior with light streaming through stained glass",
+            "opera house chandelier casting prismatic light",
+            "palace ballroom with infinite reflections",
+            "mountain amphitheater at golden hour",
+            "baroque garden maze from above",
+            "grand staircase spiraling into clouds",
+            "library of infinite books",
+            "throne room with heavenly light beam",
+            "concert hall ceiling as painted heaven",
+            "renaissance courtyard with perfect symmetry",
+        ],
+        "intimate": [
+            "single violin on velvet chair by window",
+            "sheet music scattered on moonlit floor",
+            "candelabra illuminating antique piano",
+            "rose petals on marble steps",
+            "feather quill and inkwell at dawn",
+            "butterfly on ancient stone sculpture",
+            "dewdrop on single flower petal",
+            "harp strings catching morning light",
+            "handwritten letter sealed with wax",
+            "pocket watch frozen at midnight",
+        ],
+    }
+    
+    # === AMBIENT/POST-ROCK SCENES ===
+    ambient_scenes = {
+        "vast": [
+            "endless salt flat reflecting perfect sky",
+            "single tree on infinite plain",
+            "horizon line where ocean meets sky",
+            "fog sea seen from mountain peak",
+            "desert dunes under milky way",
+            "arctic ice field at twilight",
+            "empty highway stretching to vanishing point",
+            "cloud layer from above at sunrise",
+            "canyon carved by ancient river",
+            "tundra under northern lights",
+        ],
+        "intimate": [
+            "rain droplet creating ripples in still pond",
+            "single candle flame in darkness",
+            "dust particles floating in sunbeam",
+            "breath visible in cold air",
+            "shadow of window frame on wall",
+            "ice forming on glass surface",
+            "smoke tendril rising in still air",
+            "water dripping from moss",
+            "spider web with morning dew",
+            "feather falling through light shaft",
+        ],
+    }
+    
+    # === ROCK SCENES ===
+    rock_scenes = {
+        "energetic": [
+            "lightning striking desert monument",
+            "highway cutting through mountain pass at sunset",
+            "bonfire sparks ascending to stars",
+            "storm waves crashing on lighthouse",
+            "wildfire front advancing at night",
+            "rodeo dust cloud backlit by floodlights",
+            "muscle car headlights on empty road",
+            "fireworks exploding over cityscape",
+            "wind turbines in dramatic storm",
+            "cliff diver frozen mid-leap",
+        ],
+        "contemplative": [
+            "abandoned gas station at dusk",
+            "rooftop view of sleeping city",
+            "campfire embers under starry sky",
+            "ferry crossing in morning fog",
+            "autumn road through golden forest",
+            "beach bonfire with distant lighthouse",
+            "vintage car parked at overlook",
+            "sunset through old barn doorway",
+            "mountain lake reflection at dawn",
+            "small town main street at twilight",
+        ],
+    }
+    
+    # === HIP-HOP SCENES ===
+    hiphop_scenes = {
+        "bold": [
+            "crown floating above city skyline",
+            "gold chains arranged as constellation",
+            "boombox with visible sound waves",
+            "graffiti murals coming to life",
+            "basketball court at midnight under lights",
+            "luxury car reflecting neon signs",
+            "diamond-encrusted microphone",
+            "throne made of speakers",
+            "city blocks from helicopter view",
+            "dollar bills as falling leaves",
+        ],
+        "street": [
+            "subway car interior with light streaks",
+            "fire hydrant spray on hot day",
+            "corner bodega neon at night",
+            "rooftop water towers at sunset",
+            "basketball hoop against dramatic sky",
+            "chain link fence with city behind",
+            "elevated train tracks perspective",
+            "mural wall in afternoon light",
+            "project building windows lit at night",
+            "steam rising from street grate",
+        ],
+    }
+    
+    # === FOLK/COUNTRY SCENES ===
+    folk_scenes = {
+        "pastoral": [
+            "wheat field waves under wind",
+            "barn silhouette at golden hour",
+            "dirt road through rolling hills",
+            "wildflower meadow with distant mountains",
+            "fishing boat on calm lake at dawn",
+            "stone cottage with smoke from chimney",
+            "orchard in spring bloom",
+            "hay bales in evening light",
+            "country church on hilltop",
+            "vineyard rows in autumn colors",
+        ],
+        "mystical": [
+            "ancient oak tree with massive canopy",
+            "standing stones under full moon",
+            "forest path with ethereal mist",
+            "waterfall hidden in green canyon",
+            "castle ruins on coastal cliff",
+            "fairy ring of mushrooms in forest",
+            "northern lights over log cabin",
+            "celtic knot carved in standing stone",
+            "ship's prow in stormy sea",
+            "hollow hill with glowing entrance",
+        ],
+    }
+    
+    # === UNIVERSAL/ABSTRACT SCENES ===
+    abstract_scenes = {
+        "energetic": [
+            "explosion of color in zero gravity",
+            "abstract shapes colliding with energy",
+            "paint splash frozen mid-air",
+            "prismatic light fracturing into spectrum",
+            "geometric forms in dynamic motion",
+            "fluid dynamics frozen at peak",
+            "ink drops blooming in water",
+            "fire and ice meeting boundary",
+            "metal sculpture catching light",
+            "origami forms unfolding infinitely",
+        ],
+        "calm": [
+            "gradient dissolving into mist",
+            "minimal shapes in perfect balance",
+            "soft light through translucent fabric",
+            "water surface barely disturbed",
+            "stone balancing impossibly",
+            "single line dividing space",
+            "subtle color field meditation",
+            "curves flowing like breath",
+            "zen garden pattern in sand",
+            "geometric form casting soft shadow",
+        ],
+    }
+    
+    # ==========================================
+    # SELECT SCENE BASED ON GENRE + EMOTION
+    # ==========================================
+    
+    scene_pool = []
+    
+    if is_metal:
+        if energy > 0.65 or is_tense:
+            scene_pool = metal_scenes["intense"]
+        elif is_minor and energy < 0.45:
+            scene_pool = metal_scenes["dark"]
+        else:
+            scene_pool = metal_scenes["epic"]
+    
+    elif is_electronic:
+        if is_tense or energy > 0.7:
+            scene_pool = electronic_scenes["intense"]
+        elif is_sparse or is_relaxed:
+            scene_pool = electronic_scenes["ethereal"]
+        else:
+            scene_pool = electronic_scenes["hypnotic"]
+    
+    elif is_jazz:
+        if is_minor or energy < 0.4:
+            scene_pool = jazz_scenes["soulful"]
+        else:
+            scene_pool = jazz_scenes["smooth"]
+    
+    elif is_classical:
+        if is_dense or energy > 0.5:
+            scene_pool = classical_scenes["grand"]
+        else:
+            scene_pool = classical_scenes["intimate"]
+    
+    elif is_ambient:
+        if is_sparse:
+            scene_pool = ambient_scenes["intimate"]
+        else:
+            scene_pool = ambient_scenes["vast"]
+    
+    elif is_rock:
+        if energy > 0.55:
+            scene_pool = rock_scenes["energetic"]
+        else:
+            scene_pool = rock_scenes["contemplative"]
+    
+    elif is_hiphop:
+        if is_dense or energy > 0.6:
+            scene_pool = hiphop_scenes["bold"]
+        else:
+            scene_pool = hiphop_scenes["street"]
+    
+    elif is_folk:
+        if is_minor or is_tense:
+            scene_pool = folk_scenes["mystical"]
+        else:
+            scene_pool = folk_scenes["pastoral"]
+    
+    else:
+        # Abstract/unknown genre
+        if energy > 0.5:
+            scene_pool = abstract_scenes["energetic"]
+        else:
+            scene_pool = abstract_scenes["calm"]
+    
+    # Pick scene using song-specific seed
+    core_scene = pick(scene_pool)
+    
+    # ==========================================
+    # EMOTIONAL ATMOSPHERE MODIFIERS
+    # ==========================================
+    
+    if is_major and not is_tense:
+        atmosphere_pool = [
+            "triumphant glory",
+            "radiant warmth",
+            "golden hour magic",
+            "euphoric energy",
+            "hopeful ascension",
+            "pure elation",
+            "dawn breaking",
+            "victorious moment",
+        ]
+    elif is_major and is_tense:
+        atmosphere_pool = [
+            "electric anticipation",
+            "building excitement",
+            "powerful surge",
+            "intense joy",
+            "dynamic force",
+            "ascending power",
+        ]
+    elif is_minor and is_tense:
+        atmosphere_pool = [
+            "ominous power",
+            "dark intensity",
+            "brooding force",
+            "sinister beauty",
+            "haunting presence",
+            "crushing weight",
+            "furious darkness",
+            "apocalyptic grandeur",
+        ]
+    elif is_minor and is_relaxed:
+        atmosphere_pool = [
+            "melancholic beauty",
+            "profound solitude",
+            "bittersweet nostalgia",
+            "quiet despair",
+            "lonely contemplation",
+            "fading memory",
+            "sorrowful peace",
+            "tender sadness",
+        ]
+    else:
+        atmosphere_pool = [
+            "mysterious atmosphere",
+            "contemplative mood",
+            "ethereal presence",
+            "subtle tension",
+            "dreamlike quality",
+            "timeless moment",
+        ]
+    
+    atmosphere = pick(atmosphere_pool)
+    
+    # ==========================================
+    # COLOR PALETTE (Varies by energy + valence)
+    # ==========================================
+    
+    if is_major and energy > 0.6:
+        color_pool = [
+            "vibrant gold and crimson",
+            "blazing orange and electric blue",
+            "radiant amber and ivory",
+            "sunset magenta and gold",
+            "fiery red and bright copper",
+        ]
+    elif is_major and energy <= 0.6:
+        color_pool = [
+            "warm amber and soft cream",
+            "golden yellow and sage green",
+            "coral pink and warm white",
+            "honey gold and dusty rose",
+            "peach and terracotta tones",
+        ]
+    elif is_minor and energy > 0.6:
+        color_pool = [
+            "deep crimson and black",
+            "violent purple and dark steel",
+            "blood red and charcoal",
+            "dark emerald and obsidian",
+            "midnight blue and copper",
+            "molten orange against pitch black",
+        ]
+    elif is_minor and energy <= 0.6:
+        color_pool = [
+            "muted indigo and grey",
+            "deep teal and charcoal",
+            "midnight blue and silver",
+            "forest green and shadow",
+            "dusty purple and slate",
+            "faded blue and sepia",
+        ]
+    else:
+        color_pool = [
+            "balanced neutral tones",
+            "subtle gradient palette",
+            "monochromatic depth",
+            "complementary contrast",
+            "analogous harmony",
+        ]
+    
+    colors = pick(color_pool)
+    
+    # ==========================================
+    # STYLE ANCHOR (Art direction)
+    # ==========================================
+    
+    if is_metal:
+        style_pool = ["dark fantasy art", "gothic illustration", "epic concept art", "metal album artwork"]
+    elif is_electronic:
+        style_pool = ["digital art", "cyberpunk aesthetic", "futuristic design", "abstract digital"]
+    elif is_jazz or is_folk:
+        style_pool = ["vintage poster art", "classic illustration", "warm analog aesthetic", "timeless photography"]
+    elif is_classical:
+        style_pool = ["renaissance painting style", "baroque grandeur", "classical elegance", "fine art quality"]
+    elif is_ambient:
+        style_pool = ["minimalist art", "ethereal photography", "meditative design", "serene fine art"]
+    elif is_hiphop:
+        style_pool = ["bold graphic design", "street art style", "urban contemporary", "hip-hop visual"]
+    else:
+        style_pool = ["striking poster art", "bold graphic design", "artistic composition", "professional artwork"]
+    
+    style = pick(style_pool)
+    
+    # ==========================================
+    # CONSTRUCT FINAL PROMPT (Short for Turbo)
+    # ==========================================
+    
+    # Structure: Scene, atmosphere, colors, style (~35-45 tokens)
+    prompt = f"{core_scene}, {atmosphere}, {colors}, {style}"
+    
+    # Negative prompt (less important for Turbo but still helps)
+    negative_prompt = "text, words, letters, watermark, signature, blurry, ugly, deformed, amateur"
+    
+    # Token estimate
+    word_count = len(prompt.split())
+    est_tokens = int(word_count * 1.3)  # More accurate for descriptive prompts
+    
+    print(f"\n✨ V4 Prompt Generated:", file=sys.stderr)
+    print(f"   Scene: {core_scene}", file=sys.stderr)
+    print(f"   Atmosphere: {atmosphere}", file=sys.stderr)
+    print(f"   Colors: {colors}", file=sys.stderr)
+    print(f"   Style: {style}", file=sys.stderr)
+    print(f"   Words: {word_count}, Est. tokens: ~{est_tokens}/77", file=sys.stderr)
+    print(f"   Seed hash: {seed_hash} (for variety)\n", file=sys.stderr)
     
     return prompt.strip(), negative_prompt.strip()
 

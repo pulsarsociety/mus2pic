@@ -29,7 +29,7 @@ from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 import sys
-from audio_processor import download_audio, analyze_audio, audio_to_prompt_v3, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
+from audio_processor import download_audio, analyze_audio, audio_to_prompt_v3, audio_to_prompt_v4, get_genre_from_metadata, get_genre_from_spotify, infer_genre_from_features, normalize_genre
 from model_options import generate_with_lcm, generate_with_sd14, generate_with_sd21, generate_with_turbo, generate_with_lcm_sd21, generate_with_sdxl_lightning, MODEL_REGISTRY
 
 app = FastAPI(title="Mus2Pic", description="Transform music into visual art")
@@ -343,11 +343,11 @@ async def generate_prompt(request: PromptRequest):
                 # Step 2: Analyze audio with specified duration
                 features = analyze_audio(audio_path, duration=duration)
             
-            # Step 3: Generate prompt (v1 or v3)
+            # Step 3: Generate prompt (v1, v3, or v4)
             genre_hint = None
             genre_source = None
             
-            if request.prompt_version == "v3":
+            if request.prompt_version in ["v3", "v4"]:
                 # Try to get genre from multiple sources (in order of preference)
                 raw_genres = None
                 genre_source = None
@@ -378,16 +378,26 @@ async def generate_prompt(request: PromptRequest):
                         else:
                             # 4. Final fallback: use default
                             genre_source = "default"
-                            raw_genres = None  # Will normalize to "abstract" in audio_to_prompt_v3
+                            raw_genres = None  # Will normalize to "abstract" in prompt generator
                 
-                # audio_to_prompt_v3 will normalize raw_genres and generate prompt
-                prompt, negative_prompt = audio_to_prompt_v3(
-                    features, 
-                    band_name=band_name, 
-                    song_title=song_title,
-                    raw_genres=raw_genres  # Can be list or None
-                )
-                # Get normalized genre for response (audio_to_prompt_v3 normalizes it internally)
+                # Choose prompt generator based on version
+                if request.prompt_version == "v4":
+                    # V4: Soul-capturing prompts optimized for Turbo
+                    prompt, negative_prompt = audio_to_prompt_v4(
+                        features, 
+                        band_name=band_name, 
+                        song_title=song_title,
+                        raw_genres=raw_genres
+                    )
+                else:
+                    # V3: Genre-specific visual vocabularies
+                    prompt, negative_prompt = audio_to_prompt_v3(
+                        features, 
+                        band_name=band_name, 
+                        song_title=song_title,
+                        raw_genres=raw_genres
+                    )
+                # Get normalized genre for response
                 refined_genre = normalize_genre(raw_genres) if raw_genres else "abstract"
             else:
                 # Use v1 (default) - no genre needed
