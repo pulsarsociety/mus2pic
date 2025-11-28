@@ -1280,7 +1280,12 @@ def download_audio(youtube_url):
 # 2. Analyze audio
 def analyze_audio(audio_path, duration=None, offset=5.0):
     """
-    Enhanced audio analysis with proper scaling and beat detection.
+    Enhanced audio analysis with scientific emotion extraction.
+    
+    Features extracted:
+    - Basic: tempo, energy, brightness, spectral features
+    - NEW: key/mode detection, spectral flux, onset density,
+           harmonic-percussive ratio, dynamic range, pitch register
     """
     # Load audio with offset
     if duration is None:
@@ -1343,6 +1348,111 @@ def analyze_audio(audio_path, duration=None, offset=5.0):
     y_harmonic, y_percussive = librosa.effects.hpss(y)
     harmonicity = np.mean(librosa.feature.rms(y=y_harmonic)) / (raw_energy + 1e-6)
     
+    # ==========================================
+    # NEW SCIENTIFIC FEATURES
+    # ==========================================
+    
+    # === 1. TRUE KEY/MODE DETECTION (Major vs Minor) ===
+    # Use chroma features to detect major vs minor tendency
+    chroma_cqt = librosa.feature.chroma_cqt(y=y, sr=sr)
+    chroma_mean = np.mean(chroma_cqt, axis=1)
+    
+    # Krumhansl-Kessler key profiles (simplified)
+    major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+    minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+    
+    # Normalize profiles
+    major_profile = major_profile / np.linalg.norm(major_profile)
+    minor_profile = minor_profile / np.linalg.norm(minor_profile)
+    chroma_norm = chroma_mean / (np.linalg.norm(chroma_mean) + 1e-6)
+    
+    # Find best correlation for all 12 keys
+    major_corrs = [np.corrcoef(np.roll(major_profile, i), chroma_norm)[0, 1] for i in range(12)]
+    minor_corrs = [np.corrcoef(np.roll(minor_profile, i), chroma_norm)[0, 1] for i in range(12)]
+    
+    best_major = max(major_corrs)
+    best_minor = max(minor_corrs)
+    
+    # Mode: 1.0 = definitely major, 0.0 = definitely minor
+    mode_confidence = (best_major - best_minor + 1) / 2  # Normalize to 0-1
+    is_major_key = best_major > best_minor
+    
+    # === 2. SPECTRAL FLUX (Rate of Change) ===
+    # How rapidly the spectrum changes - high = chaotic, low = stable
+    spec = np.abs(librosa.stft(y))
+    spectral_flux = np.mean(np.sqrt(np.sum(np.diff(spec, axis=1)**2, axis=0)))
+    # Normalize to 0-1 (typical range 0-50)
+    spectral_flux_norm = np.clip(spectral_flux / 50, 0, 1)
+    
+    # === 3. ONSET DENSITY (Notes per second) ===
+    # How "busy" the music is
+    onsets = librosa.onset.onset_detect(y=y, sr=sr)
+    duration_seconds = len(y) / sr
+    onset_density = len(onsets) / duration_seconds
+    # Normalize to 0-1 (0 = sparse like ambient, 10+ = dense like death metal)
+    onset_density_norm = np.clip(onset_density / 10, 0, 1)
+    
+    # === 4. HARMONIC-PERCUSSIVE RATIO ===
+    # High = melodic/flowing, Low = rhythmic/driving
+    harmonic_energy = np.mean(librosa.feature.rms(y=y_harmonic))
+    percussive_energy = np.mean(librosa.feature.rms(y=y_percussive))
+    hp_ratio = harmonic_energy / (percussive_energy + 1e-6)
+    # Normalize: >2 = very harmonic, <0.5 = very percussive
+    hp_ratio_norm = np.clip(hp_ratio / 3, 0, 1)
+    
+    # === 5. DYNAMIC RANGE ===
+    # High = cinematic/expressive, Low = compressed/loud
+    rms_db = librosa.amplitude_to_db(rms)
+    dynamic_range = np.percentile(rms_db, 95) - np.percentile(rms_db, 5)
+    # Normalize: 5dB = very compressed, 40dB = very dynamic
+    dynamic_range_norm = np.clip((dynamic_range - 5) / 35, 0, 1)
+    
+    # === 6. PITCH REGISTER (Average Pitch Height) ===
+    # High = ethereal/bright, Low = dark/heavy
+    # Use spectral centroid as proxy, normalize differently
+    # Typical range: 500 Hz (very low) to 5000 Hz (very high)
+    pitch_register = np.clip((spectral_centroid - 500) / 4500, 0, 1)
+    
+    # === 7. ATTACK SHARPNESS ===
+    # Sharp = punchy/aggressive, Soft = smooth/ambient
+    # Use onset strength variation
+    onset_strength_std = np.std(onset_env)
+    onset_strength_mean = np.mean(onset_env)
+    attack_sharpness = onset_strength_std / (onset_strength_mean + 1e-6)
+    attack_sharpness_norm = np.clip(attack_sharpness / 2, 0, 1)
+    
+    # === 8. EMOTIONAL VALENCE (Scientific calculation) ===
+    # Combine: mode (major/minor) + consonance + register
+    # This replaces the guesswork in V4
+    valence_scientific = (
+        mode_confidence * 0.50 +           # Major/minor is strongest predictor
+        hp_ratio_norm * 0.25 +             # Melodic = brighter
+        pitch_register * 0.15 +            # High register = brighter
+        (1 - spectral_flux_norm) * 0.10    # Stable = calmer (slightly brighter)
+    )
+    
+    # === 9. EMOTIONAL AROUSAL (Scientific calculation) ===
+    # Combine: energy + tempo + onset density + attack
+    tempo_factor = np.clip((float(tempo) - 60) / 140, 0, 1)  # 60 BPM = 0, 200 BPM = 1
+    arousal_scientific = (
+        energy_normalized * 0.35 +
+        tempo_factor * 0.25 +
+        onset_density_norm * 0.20 +
+        attack_sharpness_norm * 0.10 +
+        spectral_flux_norm * 0.10
+    )
+    
+    print(f"\n🔬 Scientific Audio Analysis:", file=sys.stderr)
+    print(f"   Key/Mode: {'MAJOR' if is_major_key else 'MINOR'} (confidence: {mode_confidence:.2f})", file=sys.stderr)
+    print(f"   Spectral Flux: {spectral_flux_norm:.2f} ({'chaotic' if spectral_flux_norm > 0.6 else 'stable' if spectral_flux_norm < 0.3 else 'moderate'})", file=sys.stderr)
+    print(f"   Onset Density: {onset_density:.1f}/sec ({onset_density_norm:.2f}) ({'dense' if onset_density_norm > 0.6 else 'sparse' if onset_density_norm < 0.3 else 'moderate'})", file=sys.stderr)
+    print(f"   Harmonic/Percussive: {hp_ratio:.2f} ({'melodic' if hp_ratio_norm > 0.6 else 'rhythmic' if hp_ratio_norm < 0.3 else 'balanced'})", file=sys.stderr)
+    print(f"   Dynamic Range: {dynamic_range:.1f}dB ({'cinematic' if dynamic_range_norm > 0.6 else 'compressed' if dynamic_range_norm < 0.3 else 'moderate'})", file=sys.stderr)
+    print(f"   Pitch Register: {'high' if pitch_register > 0.6 else 'low' if pitch_register < 0.3 else 'mid'} ({pitch_register:.2f})", file=sys.stderr)
+    print(f"   Attack: {'sharp' if attack_sharpness_norm > 0.6 else 'soft' if attack_sharpness_norm < 0.3 else 'moderate'} ({attack_sharpness_norm:.2f})", file=sys.stderr)
+    print(f"   → Valence (scientific): {valence_scientific:.2f} ({'positive' if valence_scientific > 0.55 else 'negative' if valence_scientific < 0.45 else 'neutral'})", file=sys.stderr)
+    print(f"   → Arousal (scientific): {arousal_scientific:.2f} ({'high' if arousal_scientific > 0.6 else 'low' if arousal_scientific < 0.4 else 'moderate'})", file=sys.stderr)
+    
     # Helper to safely convert numpy values to Python native types
     def to_native_float(value, name="unknown"):
         """Convert numpy scalar/array to native Python float."""
@@ -1350,53 +1460,24 @@ def analyze_audio(audio_path, duration=None, offset=5.0):
             if isinstance(value, np.ndarray):
                 if value.ndim == 0:
                     result = float(value.item())
-                    print(f"   DEBUG [{name}]: np.ndarray (0-d) -> {type(result).__name__} = {result}", file=sys.stderr)
                     return result
                 else:
-                    # Multi-dimensional array - shouldn't happen for scalars
-                    print(f"   DEBUG [{name}]: np.ndarray ({value.ndim}-d) -> converting first element", file=sys.stderr)
                     return float(value.flat[0])
             elif isinstance(value, (np.integer, np.floating)):
-                result = float(value)
-                print(f"   DEBUG [{name}]: {type(value).__name__} -> {type(result).__name__} = {result}", file=sys.stderr)
-                return result
+                return float(value)
             else:
-                result = float(value)
-                print(f"   DEBUG [{name}]: {type(value).__name__} -> {type(result).__name__} = {result}", file=sys.stderr)
-                return result
+                return float(value)
         except Exception as e:
             print(f"   ERROR [{name}]: Failed to convert {type(value).__name__} = {value}: {e}", file=sys.stderr)
             return 0.0
     
-    # Safe helper to convert values to string for debugging
-    def safe_str(value):
-        """Safely convert value to string for debugging."""
-        try:
-            if isinstance(value, np.ndarray):
-                return f"np.ndarray(shape={value.shape}, dtype={value.dtype})"
-            elif isinstance(value, (np.integer, np.floating)):
-                return f"{type(value).__name__}({float(value)})"
-            else:
-                return str(value)
-        except:
-            return f"<unprintable {type(value).__name__}>"
-    
-    print(f"\n🔍 DEBUG: Converting features to native Python types...", file=sys.stderr)
-    print(f"   tempo type: {type(tempo).__name__}, value: {safe_str(tempo)}", file=sys.stderr)
-    print(f"   spectral_centroid type: {type(spectral_centroid).__name__}, value: {safe_str(spectral_centroid)}", file=sys.stderr)
-    print(f"   energy_normalized type: {type(energy_normalized).__name__}, value: {safe_str(energy_normalized)}", file=sys.stderr)
-    print(f"   raw_energy type: {type(raw_energy).__name__}, value: {safe_str(raw_energy)}", file=sys.stderr)
-    print(f"   rhythm_stability type: {type(rhythm_stability).__name__}, value: {safe_str(rhythm_stability)}", file=sys.stderr)
-    print(f"   harmonicity type: {type(harmonicity).__name__}, value: {safe_str(harmonicity)}", file=sys.stderr)
-    print(f"   mfcc_mean type: {type(mfcc_mean).__name__}, shape: {mfcc_mean.shape if isinstance(mfcc_mean, np.ndarray) else 'N/A'}", file=sys.stderr)
-    print(f"   mfcc_std type: {type(mfcc_std).__name__}, shape: {mfcc_std.shape if isinstance(mfcc_std, np.ndarray) else 'N/A'}", file=sys.stderr)
-    
     result = {
+        # Basic features
         'tempo': to_native_float(tempo, 'tempo'),
         'brightness': to_native_float(spectral_centroid, 'brightness'),
         'spectral_centroid': to_native_float(spectral_centroid, 'spectral_centroid'),
-        'energy': to_native_float(energy_normalized, 'energy'),  # Use normalized energy
-        'raw_energy': to_native_float(raw_energy, 'raw_energy'),     # Keep raw for reference
+        'energy': to_native_float(energy_normalized, 'energy'),
+        'raw_energy': to_native_float(raw_energy, 'raw_energy'),
         'spectral_rolloff': to_native_float(spectral_rolloff, 'spectral_rolloff'),
         'spectral_bandwidth': to_native_float(spectral_bandwidth, 'spectral_bandwidth'),
         'spectral_contrast': to_native_float(spectral_contrast, 'spectral_contrast'),
@@ -1405,15 +1486,24 @@ def analyze_audio(audio_path, duration=None, offset=5.0):
         'rhythm_stability': to_native_float(np.clip(rhythm_stability, 0, 1), 'rhythm_stability'),
         'harmonicity': to_native_float(np.clip(harmonicity, 0, 1), 'harmonicity'),
         'mfcc_mean': mfcc_mean.tolist() if isinstance(mfcc_mean, np.ndarray) else list(mfcc_mean),
-        'mfcc_std': mfcc_std.tolist() if isinstance(mfcc_std, np.ndarray) else list(mfcc_std)
+        'mfcc_std': mfcc_std.tolist() if isinstance(mfcc_std, np.ndarray) else list(mfcc_std),
+        
+        # NEW SCIENTIFIC FEATURES
+        'is_major_key': bool(is_major_key),
+        'mode_confidence': to_native_float(mode_confidence, 'mode_confidence'),
+        'spectral_flux': to_native_float(spectral_flux_norm, 'spectral_flux'),
+        'onset_density': to_native_float(onset_density_norm, 'onset_density'),
+        'onset_density_raw': to_native_float(onset_density, 'onset_density_raw'),
+        'hp_ratio': to_native_float(hp_ratio_norm, 'hp_ratio'),
+        'dynamic_range': to_native_float(dynamic_range_norm, 'dynamic_range'),
+        'dynamic_range_db': to_native_float(dynamic_range, 'dynamic_range_db'),
+        'pitch_register': to_native_float(pitch_register, 'pitch_register'),
+        'attack_sharpness': to_native_float(attack_sharpness_norm, 'attack_sharpness'),
+        'valence_scientific': to_native_float(valence_scientific, 'valence_scientific'),
+        'arousal_scientific': to_native_float(arousal_scientific, 'arousal_scientific'),
     }
     
-    print(f"✅ DEBUG: All features converted. Checking result types...", file=sys.stderr)
-    for key, value in result.items():
-        if isinstance(value, (list, tuple)):
-            print(f"   {key}: {type(value).__name__} (length {len(value)})", file=sys.stderr)
-        else:
-            print(f"   {key}: {type(value).__name__} = {value}", file=sys.stderr)
+    print(f"\n✅ Audio features extracted ({len(result)} features)", file=sys.stderr)
     
     return result
 def audio_to_prompt_v3(features, band_name=None, song_title=None, raw_genres=None):
@@ -1834,50 +1924,75 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     spectral_rolloff = features.get("spectral_rolloff", 5000)
     spectral_bandwidth = features.get("spectral_bandwidth", 2000)
     
-    # === NEW: EMOTIONAL VALENCE (Major/Minor tendency) ===
-    # High harmonicity + high energy + fast tempo = triumphant/major
-    # Low harmonicity + low energy = dark/minor
-    # Rhythm stability is unreliable (can be very low for complex music)
+    # === NEW SCIENTIFIC FEATURES ===
+    is_major_key = features.get("is_major_key", True)
+    mode_confidence = features.get("mode_confidence", 0.5)
+    spectral_flux = features.get("spectral_flux", 0.5)
+    onset_density = features.get("onset_density", 0.5)
+    hp_ratio = features.get("hp_ratio", 0.5)  # harmonic-percussive ratio
+    dynamic_range = features.get("dynamic_range", 0.5)
+    pitch_register = features.get("pitch_register", 0.5)
+    attack_sharpness = features.get("attack_sharpness", 0.5)
+    valence_scientific = features.get("valence_scientific", 0.5)
+    arousal_scientific = features.get("arousal_scientific", 0.5)
     
-    # Normalize tempo contribution (fast = more energetic/triumphant)
-    tempo_factor = min(max((tempo - 80) / 100, 0), 1)  # 80 BPM = 0, 180 BPM = 1
-    
-    # Combined valence: harmonicity matters most, then energy, then tempo
-    valence_score = (
-        harmonicity * 0.45 +           # Melodic = brighter
-        energy * 0.35 +                # High energy = more triumphant
-        tempo_factor * 0.15 +          # Fast = more energetic feel
-        min(brightness / 4000, 1) * 0.05  # Brightness is subtle factor
-    )
+    # === EMOTIONAL VALENCE (Using scientific calculation if available) ===
+    # Use the pre-calculated scientific valence, or fall back to old method
+    if "valence_scientific" in features:
+        valence_score = valence_scientific
+    else:
+        # Fallback: old method
+        tempo_factor = min(max((tempo - 80) / 100, 0), 1)
+        valence_score = (
+            harmonicity * 0.45 +
+            energy * 0.35 +
+            tempo_factor * 0.15 +
+            min(brightness / 4000, 1) * 0.05
+        )
     
     is_major = valence_score > 0.52
     is_minor = valence_score < 0.42
     is_ambiguous = not is_major and not is_minor
     
-    # === NEW: TENSION LEVEL ===
-    # High spectral contrast + high zcr + low rhythm stability = tension
-    tension = (spectral_contrast / 40) * 0.4 + (zcr / 0.2) * 0.3 + ((1 - rhythm_stability) * 0.3)
-    tension = min(max(tension, 0), 1)
-    is_tense = tension > 0.6
-    is_relaxed = tension < 0.35
+    # Override valence with actual key detection if confident
+    if mode_confidence > 0.6:
+        if not is_major_key:
+            is_major = False
+            is_minor = True
+            valence_score = min(valence_score, 0.45)  # Cap valence for minor keys
     
-    # === NEW: DENSITY (sparse vs. full) ===
-    # High bandwidth + high energy = dense
-    # Low bandwidth + low energy = sparse
-    density = (min(spectral_bandwidth / 3000, 1) * 0.5) + (energy * 0.5)
+    # === AROUSAL/TENSION LEVEL (Using scientific calculation if available) ===
+    if "arousal_scientific" in features:
+        arousal = arousal_scientific
+    else:
+        # Fallback: old tension calculation
+        arousal = (spectral_contrast / 40) * 0.4 + (zcr / 0.2) * 0.3 + ((1 - rhythm_stability) * 0.3)
+    
+    tension = arousal  # Alias for compatibility
+    is_tense = arousal > 0.55
+    is_relaxed = arousal < 0.35
+    
+    # === DENSITY (Using onset density + energy) ===
+    if "onset_density" in features:
+        density = (onset_density * 0.6) + (energy * 0.4)
+    else:
+        density = (min(spectral_bandwidth / 3000, 1) * 0.5) + (energy * 0.5)
     is_dense = density > 0.6
     is_sparse = density < 0.35
     
-    # === NEW: DYNAMIC ARC (from raw_energy if available, or estimate) ===
-    raw_energy = features.get("raw_energy", energy)
-    # For now, estimate arc from overall characteristics
-    # In future, could analyze segments
-    if energy > 0.7 and tempo > 140:
+    # === CHAOS LEVEL (New: from spectral flux) ===
+    is_chaotic = spectral_flux > 0.6
+    is_stable = spectral_flux < 0.3
+    
+    # === DYNAMIC ARC ===
+    if arousal > 0.65 and energy > 0.6:
         arc = "climactic"
-    elif energy > 0.5 and harmonicity > 0.6:
+    elif arousal > 0.5 and dynamic_range > 0.5:
         arc = "building"
-    elif energy < 0.3:
+    elif energy < 0.25:
         arc = "floating"
+    elif is_stable and energy > 0.4:
+        arc = "driving"
     else:
         arc = "steady"
     
@@ -1896,6 +2011,19 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     is_hiphop = any(x in genre_key for x in ["hip hop", "rap", "trap"])
     is_folk = any(x in genre_key for x in ["folk", "country", "americana", "bluegrass"])
     
+    # Extreme metal subgenres that should ALWAYS be dark regardless of audio features
+    is_black_metal = "black metal" in genre_key
+    is_death_metal = "death metal" in genre_key
+    is_doom_metal = "doom metal" in genre_key
+    is_extreme_metal = is_black_metal or is_death_metal or is_doom_metal
+    
+    # GENRE OVERRIDE: Force dark valence for extreme metal
+    if is_extreme_metal:
+        print(f"   🖤 Extreme metal override: forcing dark valence for {genre_hint}", file=sys.stderr)
+        is_major = False
+        is_minor = True
+        valence_score = 0.30  # Force low valence
+    
     # === SONG-SPECIFIC SEED FOR VARIETY ===
     # Use song title and band name to create deterministic but varied selection
     seed_string = f"{band_name or 'unknown'}_{song_title or 'unknown'}_{tempo:.0f}_{energy:.2f}"
@@ -1905,20 +2033,22 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
         """Pick from options using song-specific seed for variety"""
         return options[seed_hash % len(options)]
     
-    print(f"\n🎵 V4 Soul Analysis:", file=sys.stderr)
-    print(f"   Valence: {'major/bright' if is_major else 'minor/dark' if is_minor else 'ambiguous'} ({valence_score:.2f})", file=sys.stderr)
-    print(f"   Tension: {'high' if is_tense else 'low' if is_relaxed else 'moderate'} ({tension:.2f})", file=sys.stderr)
+    print(f"\n🎵 V4 Soul Analysis (Scientific):", file=sys.stderr)
+    print(f"   Key: {'MAJOR' if is_major_key else 'MINOR'} (confidence: {mode_confidence:.2f})", file=sys.stderr)
+    print(f"   Valence: {'positive' if is_major else 'negative' if is_minor else 'neutral'} ({valence_score:.2f})", file=sys.stderr)
+    print(f"   Arousal: {'high' if is_tense else 'low' if is_relaxed else 'moderate'} ({arousal:.2f})", file=sys.stderr)
     print(f"   Density: {'dense' if is_dense else 'sparse' if is_sparse else 'balanced'} ({density:.2f})", file=sys.stderr)
+    print(f"   Chaos: {'chaotic' if is_chaotic else 'stable' if is_stable else 'moderate'} ({spectral_flux:.2f})", file=sys.stderr)
     print(f"   Arc: {arc}", file=sys.stderr)
     print(f"   Genre: {genre_hint}", file=sys.stderr)
-    if energy < 0.15:
-        print(f"   ⚡ Low energy override: forcing calm/contemplative atmosphere", file=sys.stderr)
+    if energy < 0.25:
+        print(f"   ⚡ Low energy override ({energy:.2f} < 0.25): forcing calm/contemplative atmosphere", file=sys.stderr)
     
     # ==========================================
     # VISUAL SCENE POOLS (Large variety to avoid repetition)
     # ==========================================
     
-    # === METAL SCENES (30+ options) ===
+    # === METAL SCENES (40+ options) ===
     metal_scenes = {
         "intense": [
             "ancient fortress crumbling under cosmic storm",
@@ -1955,6 +2085,45 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
             "constellation forming ancient symbol",
             "eclipse creating ring of fire",
             "mountain carved into sleeping giant",
+        ],
+        # BLACK METAL specific - cold, frozen, desolate
+        "black_metal": [
+            "frozen forest under starless winter sky",
+            "abandoned church burning in snowstorm",
+            "lone figure on frozen mountain peak",
+            "ravens circling ancient stone monument",
+            "blizzard consuming desolate Nordic landscape",
+            "moonlight through dead forest branches",
+            "frozen lake reflecting endless void",
+            "crumbling castle on icy cliff",
+            "northern lights over barren tundra",
+            "wolf pack crossing frozen wasteland",
+        ],
+        # DEATH METAL specific - brutal, visceral, apocalyptic
+        "death_metal": [
+            "mass of writhing shadows consuming light",
+            "skeletal cathedral rising from wasteland",
+            "cosmic horror emerging from dimensional rift",
+            "battlefield of fallen titans",
+            "plague spreading across dying world",
+            "eldritch entity awakening in void",
+            "tsunami of darkness engulfing city",
+            "mechanical nightmare devouring flesh",
+            "planet cracking apart in space",
+            "ocean of blood under eclipse",
+        ],
+        # DOOM METAL specific - slow, crushing, hopeless
+        "doom_metal": [
+            "mountain of skulls under dying sun",
+            "endless desert with single dead tree",
+            "sinking ship in oil-black ocean",
+            "abandoned city being reclaimed by nature",
+            "hourglass with black sand frozen in time",
+            "figure carrying impossible burden up endless stairs",
+            "lighthouse beam cutting through eternal fog",
+            "graveyard stretching to horizon",
+            "last ember of dying fire",
+            "statue weeping in ruined temple",
         ],
     }
     
@@ -2213,7 +2382,14 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     scene_pool = []
     
     if is_metal:
-        if energy > 0.65 or is_tense:
+        # Extreme metal subgenres get their own specific pools
+        if is_black_metal:
+            scene_pool = metal_scenes["black_metal"]
+        elif is_death_metal:
+            scene_pool = metal_scenes["death_metal"]
+        elif is_doom_metal:
+            scene_pool = metal_scenes["doom_metal"]
+        elif energy > 0.65 or is_tense:
             scene_pool = metal_scenes["intense"]
         elif is_minor and energy < 0.45:
             scene_pool = metal_scenes["dark"]
@@ -2247,7 +2423,7 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
             scene_pool = ambient_scenes["vast"]
     
     elif is_rock:
-        if energy < 0.2:
+        if energy < 0.25:
             # Ballads - November Rain, Nothing Else Matters, etc.
             scene_pool = rock_scenes["contemplative"]
         elif is_major and energy > 0.5:
@@ -2284,11 +2460,46 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     # EMOTIONAL ATMOSPHERE MODIFIERS
     # ==========================================
     
-    # OVERRIDE: Very low energy songs should always get calm/contemplative atmosphere
+    # OVERRIDE: Low energy songs should always get calm/contemplative atmosphere
     # regardless of other factors (ballads, ambient, etc.)
-    is_very_low_energy = energy < 0.15
+    # Threshold 0.25 catches most ballads including "sad songs in major keys"
+    is_very_low_energy = energy < 0.25
     
-    if is_very_low_energy:
+    # EXTREME METAL ATMOSPHERE OVERRIDE
+    if is_black_metal:
+        atmosphere_pool = [
+            "frozen desolation",
+            "winter's eternal grip",
+            "bleak Nordic cold",
+            "misanthropic fury",
+            "ancient darkness",
+            "grim solitude",
+            "frostbitten despair",
+            "northern grimness",
+        ]
+    elif is_death_metal:
+        atmosphere_pool = [
+            "brutal devastation",
+            "visceral horror",
+            "relentless annihilation",
+            "cosmic dread",
+            "overwhelming destruction",
+            "primal violence",
+            "apocalyptic terror",
+            "merciless chaos",
+        ]
+    elif is_doom_metal:
+        atmosphere_pool = [
+            "crushing despair",
+            "eternal sorrow",
+            "hopeless weight",
+            "slow devastation",
+            "mournful heaviness",
+            "endless grief",
+            "monolithic doom",
+            "suffocating darkness",
+        ]
+    elif is_very_low_energy:
         # Force calm/contemplative atmosphere for quiet music
         if is_minor or valence_score < 0.55:
             atmosphere_pool = [
@@ -2373,10 +2584,38 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     atmosphere = pick(atmosphere_pool)
     
     # ==========================================
-    # COLOR PALETTE (Varies by energy + valence)
+    # COLOR PALETTE (Varies by energy + valence + genre)
     # ==========================================
     
-    if is_major and energy > 0.6:
+    # EXTREME METAL COLOR OVERRIDE - Always cold/dark
+    if is_black_metal:
+        color_pool = [
+            "frozen white and pitch black",
+            "icy blue and charcoal grey",
+            "moonlight silver and void black",
+            "frost white and deep forest green",
+            "pale blue and obsidian",
+            "snow white and shadow black",
+        ]
+    elif is_death_metal:
+        color_pool = [
+            "blood red and decay black",
+            "sickly green and dark crimson",
+            "rust orange and rotting brown",
+            "bile yellow and necrotic grey",
+            "visceral red and bone white",
+            "putrid purple and death black",
+        ]
+    elif is_doom_metal:
+        color_pool = [
+            "faded sepia and ash grey",
+            "dying amber and shadow",
+            "rust brown and endless black",
+            "burnt orange and void",
+            "aged bronze and dust",
+            "amber ember and deep shadow",
+        ]
+    elif is_major and energy > 0.6:
         color_pool = [
             "vibrant gold and crimson",
             "blazing orange and electric blue",
