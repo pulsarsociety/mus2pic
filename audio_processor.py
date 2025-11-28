@@ -1911,6 +1911,8 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     print(f"   Density: {'dense' if is_dense else 'sparse' if is_sparse else 'balanced'} ({density:.2f})", file=sys.stderr)
     print(f"   Arc: {arc}", file=sys.stderr)
     print(f"   Genre: {genre_hint}", file=sys.stderr)
+    if energy < 0.15:
+        print(f"   ⚡ Low energy override: forcing calm/contemplative atmosphere", file=sys.stderr)
     
     # ==========================================
     # VISUAL SCENE POOLS (Large variety to avoid repetition)
@@ -2245,7 +2247,10 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
             scene_pool = ambient_scenes["vast"]
     
     elif is_rock:
-        if is_major and energy > 0.5:
+        if energy < 0.2:
+            # Ballads - November Rain, Nothing Else Matters, etc.
+            scene_pool = rock_scenes["contemplative"]
+        elif is_major and energy > 0.5:
             # Triumphant classic rock - Highway Star, Born to Run, etc.
             scene_pool = rock_scenes["triumphant"]
         elif energy > 0.55:
@@ -2279,7 +2284,37 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     # EMOTIONAL ATMOSPHERE MODIFIERS
     # ==========================================
     
-    if is_major and not is_tense:
+    # OVERRIDE: Very low energy songs should always get calm/contemplative atmosphere
+    # regardless of other factors (ballads, ambient, etc.)
+    is_very_low_energy = energy < 0.15
+    
+    if is_very_low_energy:
+        # Force calm/contemplative atmosphere for quiet music
+        if is_minor or valence_score < 0.55:
+            atmosphere_pool = [
+                "melancholic beauty",
+                "profound solitude",
+                "bittersweet nostalgia",
+                "quiet reflection",
+                "lonely contemplation",
+                "fading memory",
+                "sorrowful peace",
+                "tender sadness",
+                "gentle heartache",
+                "wistful longing",
+            ]
+        else:
+            atmosphere_pool = [
+                "serene beauty",
+                "peaceful stillness",
+                "gentle warmth",
+                "quiet hope",
+                "soft embrace",
+                "tender moment",
+                "calm reflection",
+                "tranquil grace",
+            ]
+    elif is_major and not is_tense:
         atmosphere_pool = [
             "triumphant glory",
             "radiant warmth",
