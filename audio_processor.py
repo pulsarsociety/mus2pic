@@ -1835,12 +1835,23 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
     spectral_bandwidth = features.get("spectral_bandwidth", 2000)
     
     # === NEW: EMOTIONAL VALENCE (Major/Minor tendency) ===
-    # High harmonicity + high brightness tends toward major/bright
-    # Low harmonicity + low brightness tends toward minor/dark
-    # chroma_std indicates harmonic complexity
-    valence_score = (harmonicity * 0.4) + (min(brightness / 5000, 1) * 0.3) + (rhythm_stability * 0.3)
-    is_major = valence_score > 0.55
-    is_minor = valence_score < 0.45
+    # High harmonicity + high energy + fast tempo = triumphant/major
+    # Low harmonicity + low energy = dark/minor
+    # Rhythm stability is unreliable (can be very low for complex music)
+    
+    # Normalize tempo contribution (fast = more energetic/triumphant)
+    tempo_factor = min(max((tempo - 80) / 100, 0), 1)  # 80 BPM = 0, 180 BPM = 1
+    
+    # Combined valence: harmonicity matters most, then energy, then tempo
+    valence_score = (
+        harmonicity * 0.45 +           # Melodic = brighter
+        energy * 0.35 +                # High energy = more triumphant
+        tempo_factor * 0.15 +          # Fast = more energetic feel
+        min(brightness / 4000, 1) * 0.05  # Brightness is subtle factor
+    )
+    
+    is_major = valence_score > 0.52
+    is_minor = valence_score < 0.42
     is_ambiguous = not is_major and not is_minor
     
     # === NEW: TENSION LEVEL ===
@@ -2081,7 +2092,19 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
             "muscle car headlights on empty road",
             "fireworks exploding over cityscape",
             "wind turbines in dramatic storm",
-            "cliff diver frozen mid-leap",
+            "electric guitar silhouette against amplifier glow",
+        ],
+        "triumphant": [
+            "muscle car racing toward burning horizon",
+            "eagle soaring over canyon at golden hour",
+            "motorcycle on endless desert highway",
+            "sunrise explosion over mountain ridge",
+            "jet breaking through cloud layer",
+            "stadium lights illuminating empty stage",
+            "comet streaking across night sky",
+            "wave cresting at perfect moment",
+            "lightning bolt frozen in time",
+            "rocket launch trail against twilight",
         ],
         "contemplative": [
             "abandoned gas station at dusk",
@@ -2222,7 +2245,10 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
             scene_pool = ambient_scenes["vast"]
     
     elif is_rock:
-        if energy > 0.55:
+        if is_major and energy > 0.5:
+            # Triumphant classic rock - Highway Star, Born to Run, etc.
+            scene_pool = rock_scenes["triumphant"]
+        elif energy > 0.55:
             scene_pool = rock_scenes["energetic"]
         else:
             scene_pool = rock_scenes["contemplative"]
@@ -2272,6 +2298,10 @@ def audio_to_prompt_v4(features, band_name=None, song_title=None, raw_genres=Non
             "intense joy",
             "dynamic force",
             "ascending power",
+            "exhilarating rush",
+            "adrenaline surge",
+            "unstoppable momentum",
+            "blazing triumph",
         ]
     elif is_minor and is_tense:
         atmosphere_pool = [
