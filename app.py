@@ -369,10 +369,20 @@ async def extract_metadata(request: PromptRequest):
             if key not in serialized_features:
                 serialized_features[key] = default
         
+        # Try to get genre from Spotify for LLM mode prefill
+        genre_hint = None
+        try:
+            raw_genres = get_genre_from_spotify(band_name, song_title, skip_swap_detection=False)
+            if raw_genres:
+                genre_hint = normalize_genre(raw_genres)
+        except Exception:
+            pass  # Genre is optional, don't fail if we can't get it
+        
         return {
             'success': True,
             'band': band_name,
             'song': song_title,
+            'genre': genre_hint,  # For LLM mode prefill
             'features': serialized_features,
             'is_cached': is_cached  # Flag to indicate if band/song is in cache
         }

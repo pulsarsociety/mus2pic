@@ -874,6 +874,24 @@
                 
                 <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
                 
+                <!-- Optional: Prefill from YouTube -->
+                <div class="input-group" style="margin-bottom: 15px;">
+                    <label for="llmYoutubeUrl">Prefill from YouTube (optional):</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="llmYoutubeUrl" placeholder="https://www.youtube.com/watch?v=..." style="flex: 1;" oninput="showLLMThumbnail(this.value)" />
+                        <button type="button" id="extractMetadataBtn" onclick="extractMetadataForLLM()" style="padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap;">
+                            📥 Extract
+                        </button>
+                    </div>
+                    <div id="llmThumbnailPreview" style="display: none; margin-top: 10px; text-align: center;">
+                        <img id="llmThumbnailImage" style="max-width: 200px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" />
+                    </div>
+                    <div id="extractStatus" style="display: none; padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 0.85em;"></div>
+                    <small style="color: #666; font-size: 0.8em; display: block; margin-top: 5px;">
+                        Paste a YouTube link to auto-fill song info, or enter manually below
+                    </small>
+                </div>
+                
                 <div class="input-group">
                     <label for="llmSongTitle">Song Title: <span style="color: #e74c3c;">*</span></label>
                     <input type="text" id="llmSongTitle" placeholder="e.g., Blinding Lights" />
@@ -1330,6 +1348,127 @@
             } catch (e) {
                 updateApiKeyStatus('invalid', 'Could not validate key. Check your connection.');
             }
+        }
+        
+        // Show thumbnail for LLM mode YouTube URL
+        function showLLMThumbnail(url) {
+            const preview = document.getElementById('llmThumbnailPreview');
+            const img = document.getElementById('llmThumbnailImage');
+            
+            // Extract video ID from YouTube URL
+            const videoId = extractYouTubeVideoId(url);
+            
+            if (videoId) {
+                img.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+                preview.style.display = 'block';
+            } else {
+                preview.style.display = 'none';
+            }
+        }
+        
+        // Extract YouTube video ID from URL
+        function extractYouTubeVideoId(url) {
+            const patterns = [
+                /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+                /youtube\.com\/shorts\/([^&\n?#]+)/
+            ];
+            
+            for (const pattern of patterns) {
+                const match = url.match(pattern);
+                if (match) return match[1];
+            }
+            return null;
+        }
+        
+        // Update extract status display
+        function updateExtractStatus(type, message) {
+            const statusDiv = document.getElementById('extractStatus');
+            const styles = {
+                'success': { bg: '#d4edda', color: '#155724', icon: '✅' },
+                'error': { bg: '#f8d7da', color: '#721c24', icon: '❌' },
+                'loading': { bg: '#fff3cd', color: '#856404', icon: '⏳' },
+            };
+            const style = styles[type] || styles['loading'];
+            statusDiv.innerHTML = `${style.icon} ${message}`;
+            statusDiv.style.background = style.bg;
+            statusDiv.style.color = style.color;
+            statusDiv.style.display = 'block';
+        }
+        
+        // Extract metadata from YouTube URL for LLM mode
+        async function extractMetadataForLLM() {
+            const url = document.getElementById('llmYoutubeUrl').value.trim();
+            const btn = document.getElementById('extractMetadataBtn');
+            
+            if (!url) {
+                updateExtractStatus('error', 'Please enter a YouTube URL');
+                return;
+            }
+            
+            if (!extractYouTubeVideoId(url)) {
+                updateExtractStatus('error', 'Invalid YouTube URL');
+                return;
+            }
+            
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Extracting...';
+            updateExtractStatus('loading', 'Downloading and analyzing video metadata...');
+            
+            try {
+                const response = await fetch('/api/extract-metadata', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        url: url,
+                        duration: 30  // Just 30 seconds for quick metadata extraction
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to extract metadata');
+                }
+                
+                // Prefill the fields
+                if (data.song) {
+                    document.getElementById('llmSongTitle').value = data.song;
+                    highlightField('llmSongTitle');
+                }
+                if (data.band) {
+                    document.getElementById('llmArtist').value = data.band;
+                    highlightField('llmArtist');
+                }
+                if (data.genre) {
+                    document.getElementById('llmGenre').value = data.genre;
+                    highlightField('llmGenre');
+                }
+                
+                // Build status message
+                let statusMsg = `Found: "${data.song}" by ${data.band}`;
+                if (data.genre) {
+                    statusMsg += ` (${data.genre})`;
+                }
+                updateExtractStatus('success', statusMsg);
+                
+            } catch (e) {
+                console.error('Metadata extraction error:', e);
+                updateExtractStatus('error', e.message || 'Failed to extract metadata');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '📥 Extract';
+            }
+        }
+        
+        // Highlight a field briefly to show it was updated
+        function highlightField(fieldId) {
+            const field = document.getElementById(fieldId);
+            field.style.transition = 'background-color 0.3s';
+            field.style.backgroundColor = '#d4edda';
+            setTimeout(() => {
+                field.style.backgroundColor = '';
+            }, 1500);
         }
         
         // Generate prompt using LLM
