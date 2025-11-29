@@ -256,12 +256,19 @@ async def extract_metadata(request: PromptRequest):
                 # Use a safe default
                 serialized_features[key] = 0.0 if key not in ['mfcc_mean', 'mfcc_std'] else []
         
-        # Ensure we have all expected keys with defaults
+        # Ensure we have all expected keys with defaults (including new scientific features)
         expected_keys = {
+            # Basic features
             'tempo': 0, 'brightness': 0, 'spectral_centroid': 0, 'energy': 0,
             'spectral_rolloff': 0, 'spectral_bandwidth': 0, 'spectral_contrast': 0,
             'zcr': 0, 'chroma_std': 0, 'rhythm_stability': 0, 'harmonicity': 0,
-            'mfcc_mean': [], 'mfcc_std': []
+            'mfcc_mean': [], 'mfcc_std': [], 'raw_energy': 0,
+            # NEW scientific features
+            'is_major_key': True, 'mode_confidence': 0.5,
+            'spectral_flux': 0.5, 'onset_density': 0.5, 'onset_density_raw': 0,
+            'hp_ratio': 0.5, 'dynamic_range': 0.5, 'dynamic_range_db': 0,
+            'pitch_register': 0.5, 'attack_sharpness': 0.5,
+            'valence_scientific': 0.5, 'arousal_scientific': 0.5
         }
         for key, default in expected_keys.items():
             if key not in serialized_features:
@@ -414,6 +421,18 @@ async def generate_prompt(request: PromptRequest):
                 pass
         
         # Convert numpy types to native Python types for JSON serialization
+        import numpy as np
+        
+        def safe_float(val, default=0.0, decimals=4):
+            """Safely convert value to float."""
+            try:
+                if isinstance(val, np.ndarray):
+                    val = val.item() if val.ndim == 0 else val.flat[0]
+                return round(float(val), decimals)
+            except:
+                return default
+        
+        # Return ALL features including new scientific ones
         return {
             'success': True,
             'prompt': prompt,
@@ -421,12 +440,29 @@ async def generate_prompt(request: PromptRequest):
             'band': band_name,
             'song': song_title,
             'from_cache': False,  # Prompt caching removed
-            'genre_hint': refined_genre if request.prompt_version == "v3" else None,  # Refined genre (if v3)
-            'genre_source': genre_source,  # Where genre came from: "metadata", "spotify", "inferred", "default", or "none"
+            'genre_hint': refined_genre if request.prompt_version in ["v3", "v4"] else None,
+            'genre_source': genre_source,
             'features': {
-                'tempo': round(float(features.get('tempo', 0)), 2),
-                'brightness': round(float(features.get('brightness', 0)), 2),
-                'energy': round(float(features.get('energy', 0)), 4)
+                # Basic features
+                'tempo': safe_float(features.get('tempo', 0), decimals=0),
+                'brightness': safe_float(features.get('brightness', 0), decimals=2),
+                'energy': safe_float(features.get('energy', 0)),
+                'raw_energy': safe_float(features.get('raw_energy', 0)),
+                'harmonicity': safe_float(features.get('harmonicity', 0)),
+                'rhythm_stability': safe_float(features.get('rhythm_stability', 0)),
+                # NEW scientific features
+                'is_major_key': bool(features.get('is_major_key', True)),
+                'mode_confidence': safe_float(features.get('mode_confidence', 0.5)),
+                'spectral_flux': safe_float(features.get('spectral_flux', 0.5)),
+                'onset_density': safe_float(features.get('onset_density', 0.5)),
+                'onset_density_raw': safe_float(features.get('onset_density_raw', 0)),
+                'hp_ratio': safe_float(features.get('hp_ratio', 0.5)),
+                'dynamic_range': safe_float(features.get('dynamic_range', 0.5)),
+                'dynamic_range_db': safe_float(features.get('dynamic_range_db', 0)),
+                'pitch_register': safe_float(features.get('pitch_register', 0.5)),
+                'attack_sharpness': safe_float(features.get('attack_sharpness', 0.5)),
+                'valence_scientific': safe_float(features.get('valence_scientific', 0.5)),
+                'arousal_scientific': safe_float(features.get('arousal_scientific', 0.5)),
             }
         }
         
