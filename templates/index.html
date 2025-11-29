@@ -354,24 +354,26 @@
         .result-features-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
+            gap: 8px;
         }
 
         .result-feature-item {
             text-align: center;
-            padding: 10px;
-            background: #f8f9fa;
+            padding: 8px 6px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
             border-radius: 8px;
+            border: 1px solid #dee2e6;
         }
 
         .result-feature-label {
-            font-size: 0.8em;
+            font-size: 0.75em;
             color: #666;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
+            white-space: nowrap;
         }
 
         .result-feature-value {
-            font-size: 1.2em;
+            font-size: 1.1em;
             font-weight: 600;
             color: #667eea;
         }
@@ -1459,21 +1461,53 @@
                 window.currentPrompt = data.prompt;
                 window.currentNegativePrompt = data.negative_prompt;
 
-                // Show features
+                // Show features - scientific audio analysis
                 if (data.features) {
                     const featuresDiv = document.getElementById('features');
+                    const f = data.features;
+                    
+                    // Helper to format values
+                    const fmt = (val, decimals = 2) => {
+                        if (val === undefined || val === null) return 'N/A';
+                        return typeof val === 'number' ? val.toFixed(decimals) : val;
+                    };
+                    
                     featuresDiv.innerHTML = `
                         <div class="feature-item">
-                            <div class="feature-label">Tempo</div>
-                            <div class="feature-value">${data.features.tempo} BPM</div>
+                            <div class="feature-label">🎵 Tempo</div>
+                            <div class="feature-value">${fmt(f.tempo, 0)} BPM</div>
                         </div>
                         <div class="feature-item">
-                            <div class="feature-label">Brightness</div>
-                            <div class="feature-value">${data.features.brightness}</div>
+                            <div class="feature-label">⚡ Energy</div>
+                            <div class="feature-value">${fmt(f.energy)}</div>
                         </div>
                         <div class="feature-item">
-                            <div class="feature-label">Energy</div>
-                            <div class="feature-value">${data.features.energy}</div>
+                            <div class="feature-label">🎹 Key</div>
+                            <div class="feature-value">${f.is_major_key ? 'Major' : 'Minor'}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">😊 Valence</div>
+                            <div class="feature-value">${fmt(f.valence_scientific)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">🔥 Arousal</div>
+                            <div class="feature-value">${fmt(f.arousal_scientific)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">🌀 Chaos</div>
+                            <div class="feature-value">${fmt(f.spectral_flux)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">📊 Density</div>
+                            <div class="feature-value">${fmt(f.onset_density)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">🎸 Melodic</div>
+                            <div class="feature-value">${fmt(f.hp_ratio)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">📈 Dynamic</div>
+                            <div class="feature-value">${fmt(f.dynamic_range)}</div>
                         </div>
                     `;
                 }
@@ -1999,21 +2033,53 @@
                 window.currentPrompt = data.prompt;
                 window.currentNegativePrompt = data.negative_prompt;
 
-                // Show features
+                // Show features - scientific audio analysis
                 if (data.features) {
                     const featuresDiv = document.getElementById('features');
+                    const f = data.features;
+                    
+                    // Helper to format values
+                    const fmt = (val, decimals = 2) => {
+                        if (val === undefined || val === null) return 'N/A';
+                        return typeof val === 'number' ? val.toFixed(decimals) : val;
+                    };
+                    
                     featuresDiv.innerHTML = `
                         <div class="feature-item">
-                            <div class="feature-label">Tempo</div>
-                            <div class="feature-value">${data.features.tempo} BPM</div>
+                            <div class="feature-label">🎵 Tempo</div>
+                            <div class="feature-value">${fmt(f.tempo, 0)} BPM</div>
                         </div>
                         <div class="feature-item">
-                            <div class="feature-label">Brightness</div>
-                            <div class="feature-value">${data.features.brightness}</div>
+                            <div class="feature-label">⚡ Energy</div>
+                            <div class="feature-value">${fmt(f.energy)}</div>
                         </div>
                         <div class="feature-item">
-                            <div class="feature-label">Energy</div>
-                            <div class="feature-value">${data.features.energy}</div>
+                            <div class="feature-label">🎹 Key</div>
+                            <div class="feature-value">${f.is_major_key ? 'Major' : 'Minor'}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">😊 Valence</div>
+                            <div class="feature-value">${fmt(f.valence_scientific)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">🔥 Arousal</div>
+                            <div class="feature-value">${fmt(f.arousal_scientific)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">🌀 Chaos</div>
+                            <div class="feature-value">${fmt(f.spectral_flux)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">📊 Density</div>
+                            <div class="feature-value">${fmt(f.onset_density)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">🎸 Melodic</div>
+                            <div class="feature-value">${fmt(f.hp_ratio)}</div>
+                        </div>
+                        <div class="feature-item">
+                            <div class="feature-label">📈 Dynamic</div>
+                            <div class="feature-value">${fmt(f.dynamic_range)}</div>
                         </div>
                     `;
                 }
@@ -2058,19 +2124,43 @@
                 <div class="result-content">
                     <div class="result-left">
                         <div class="result-section">
-                            <div class="result-section-title">🎵 Audio Features</div>
-                            <div class="result-features-grid">
+                            <div class="result-section-title">🔬 Scientific Audio Analysis</div>
+                            <div class="result-features-grid" style="grid-template-columns: repeat(3, 1fr);">
                                 <div class="result-feature-item">
-                                    <div class="result-feature-label">Tempo</div>
-                                    <div class="result-feature-value">${features.tempo || 'N/A'} BPM</div>
+                                    <div class="result-feature-label">🎵 Tempo</div>
+                                    <div class="result-feature-value">${features.tempo ? features.tempo.toFixed(0) : 'N/A'} BPM</div>
                                 </div>
                                 <div class="result-feature-item">
-                                    <div class="result-feature-label">Brightness</div>
-                                    <div class="result-feature-value">${features.brightness || 'N/A'}</div>
+                                    <div class="result-feature-label">⚡ Energy</div>
+                                    <div class="result-feature-value">${features.energy ? features.energy.toFixed(2) : 'N/A'}</div>
                                 </div>
                                 <div class="result-feature-item">
-                                    <div class="result-feature-label">Energy</div>
-                                    <div class="result-feature-value">${features.energy || 'N/A'}</div>
+                                    <div class="result-feature-label">🎹 Key</div>
+                                    <div class="result-feature-value">${features.is_major_key !== undefined ? (features.is_major_key ? 'Major' : 'Minor') : 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">😊 Valence</div>
+                                    <div class="result-feature-value">${features.valence_scientific ? features.valence_scientific.toFixed(2) : 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">🔥 Arousal</div>
+                                    <div class="result-feature-value">${features.arousal_scientific ? features.arousal_scientific.toFixed(2) : 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">🌀 Chaos</div>
+                                    <div class="result-feature-value">${features.spectral_flux ? features.spectral_flux.toFixed(2) : 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">📊 Density</div>
+                                    <div class="result-feature-value">${features.onset_density ? features.onset_density.toFixed(2) : 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">🎸 Melodic</div>
+                                    <div class="result-feature-value">${features.hp_ratio ? features.hp_ratio.toFixed(2) : 'N/A'}</div>
+                                </div>
+                                <div class="result-feature-item">
+                                    <div class="result-feature-label">📈 Dynamic</div>
+                                    <div class="result-feature-value">${features.dynamic_range ? features.dynamic_range.toFixed(2) : 'N/A'}</div>
                                 </div>
                             </div>
                         </div>
