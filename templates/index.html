@@ -1395,7 +1395,7 @@
             statusDiv.style.display = 'block';
         }
         
-        // Extract metadata from YouTube URL for LLM mode
+        // Extract metadata from YouTube URL for LLM mode (quick - no audio analysis)
         async function extractMetadataForLLM() {
             const url = document.getElementById('llmYoutubeUrl').value.trim();
             const btn = document.getElementById('extractMetadataBtn');
@@ -1413,16 +1413,14 @@
             // Disable button and show loading
             btn.disabled = true;
             btn.innerHTML = '⏳ Extracting...';
-            updateExtractStatus('loading', 'Downloading and analyzing video metadata...');
+            updateExtractStatus('loading', 'Fetching video info...');
             
             try {
-                const response = await fetch('/api/extract-metadata', {
+                // Use quick endpoint - no audio download/analysis
+                const response = await fetch('/api/extract-metadata-quick', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        url: url,
-                        duration: 30  // Just 30 seconds for quick metadata extraction
-                    })
+                    body: JSON.stringify({ url: url })
                 });
                 
                 const data = await response.json();

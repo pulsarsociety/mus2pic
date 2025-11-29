@@ -183,6 +183,91 @@ async def validate_api_key(request: ValidateAPIKeyRequest):
             "message": str(e)
         }
 
+class QuickMetadataRequest(BaseModel):
+    """Request for quick metadata extraction (no audio analysis)"""
+    url: str
+
+@app.post("/api/extract-metadata-quick")
+async def extract_metadata_quick(request: QuickMetadataRequest):
+    """
+    Quick metadata extraction for LLM mode - NO audio analysis.
+    Only extracts: song title, artist/band, genre from Spotify.
+    Much faster than full extraction.
+    """
+    try:
+        import yt_dlp
+        
+        youtube_url = request.url.strip()
+        
+        if not youtube_url:
+            raise HTTPException(status_code=400, detail="YouTube URL is required")
+        
+        # Extract metadata from YouTube without downloading audio
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,  # We need full metadata
+            'skip_download': True,  # Don't download anything
+        }
+        
+        band_name = None
+        song_title = None
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+            
+            # Try to get artist and title from metadata
+            artist = info.get('artist') or info.get('creator') or info.get('uploader')
+            track = info.get('track') or info.get('title')
+            
+            # Parse title if artist/track not in metadata
+            title = info.get('title', '')
+            
+            if artist and track:
+                band_name = artist
+                song_title = track
+            elif ' - ' in title:
+                # Common format: "Artist - Song Title"
+                parts = title.split(' - ', 1)
+                band_name = parts[0].strip()
+                song_title = parts[1].strip()
+            elif ' | ' in title:
+                # Alternative format: "Artist | Song Title"
+                parts = title.split(' | ', 1)
+                band_name = parts[0].strip()
+                song_title = parts[1].strip()
+            else:
+                # Fallback: use uploader as artist, title as song
+                band_name = info.get('uploader', 'Unknown Artist')
+                song_title = title
+            
+            # Clean up common suffixes
+            clean_suffixes = ['(Official Video)', '(Official Music Video)', '(Official Audio)', 
+                            '(Lyric Video)', '(Lyrics)', '[Official Video]', '[Official Music Video]',
+                            '(HD)', '(HQ)', '(4K)', 'Official Video', 'Official Music Video']
+            for suffix in clean_suffixes:
+                song_title = song_title.replace(suffix, '').strip()
+                band_name = band_name.replace(suffix, '').strip()
+        
+        # Get genre from Spotify (fast lookup with caching)
+        genre_hint = None
+        try:
+            raw_genres = get_genre_from_spotify(band_name, song_title, skip_swap_detection=False)
+            if raw_genres:
+                genre_hint = normalize_genre(raw_genres)
+        except Exception:
+            pass  # Genre is optional
+        
+        return {
+            'success': True,
+            'band': band_name,
+            'song': song_title,
+            'genre': genre_hint
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/generate-prompt-llm")
 async def generate_prompt_llm(request: LLMPromptRequest):
     """
