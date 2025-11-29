@@ -192,64 +192,65 @@ async def extract_metadata_quick(request: QuickMetadataRequest):
     """
     Quick metadata extraction for LLM mode - NO audio analysis.
     Only extracts: song title, artist/band, genre from Spotify.
-    Much faster than full extraction.
+    Uses same extraction logic as full extraction but skips audio download.
     """
     try:
         import yt_dlp
+        from audio_processor import (
+            extract_band_song_from_metadata, 
+            extract_video_attribute_from_page,
+            get_video_id_from_url,
+            get_cached_youtube_metadata,
+            save_youtube_metadata
+        )
         
         youtube_url = request.url.strip()
         
         if not youtube_url:
             raise HTTPException(status_code=400, detail="YouTube URL is required")
         
-        # Extract metadata from YouTube without downloading audio
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,  # We need full metadata
-            'skip_download': True,  # Don't download anything
-        }
+        # Get video ID for caching
+        video_id = get_video_id_from_url(youtube_url)
         
         band_name = None
         song_title = None
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=False)
-            
-            # Try to get artist and title from metadata
-            artist = info.get('artist') or info.get('creator') or info.get('uploader')
-            track = info.get('track') or info.get('title')
-            
-            # Parse title if artist/track not in metadata
-            title = info.get('title', '')
-            
-            if artist and track:
-                band_name = artist
-                song_title = track
-            elif ' - ' in title:
-                # Common format: "Artist - Song Title"
-                parts = title.split(' - ', 1)
-                band_name = parts[0].strip()
-                song_title = parts[1].strip()
-            elif ' | ' in title:
-                # Alternative format: "Artist | Song Title"
-                parts = title.split(' | ', 1)
-                band_name = parts[0].strip()
-                song_title = parts[1].strip()
-            else:
-                # Fallback: use uploader as artist, title as song
-                band_name = info.get('uploader', 'Unknown Artist')
-                song_title = title
-            
-            # Clean up common suffixes
-            clean_suffixes = ['(Official Video)', '(Official Music Video)', '(Official Audio)', 
-                            '(Lyric Video)', '(Lyrics)', '[Official Video]', '[Official Music Video]',
-                            '(HD)', '(HQ)', '(4K)', 'Official Video', 'Official Music Video']
-            for suffix in clean_suffixes:
-                song_title = song_title.replace(suffix, '').strip()
-                band_name = band_name.replace(suffix, '').strip()
+        # Check cache first
+        if video_id:
+            cached_band, cached_song = get_cached_youtube_metadata(video_id)
+            if cached_band and cached_song:
+                print(f"✅ Using cached metadata for video {video_id}")
+                band_name = cached_band
+                song_title = cached_song
         
-        # Get genre from Spotify (fast lookup with caching)
+        # If not cached, try to extract from YouTube page (most reliable method)
+        if not band_name or not song_title:
+            if video_id:
+                page_artist, page_song = extract_video_attribute_from_page(video_id)
+                if page_artist and page_song:
+                    print(f"✅ Extracted from YouTube page: Band='{page_artist}', Song='{page_song}'")
+                    band_name = page_artist
+                    song_title = page_song
+        
+        # If still not found, use yt-dlp metadata extraction (without downloading)
+        if not band_name or not song_title:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'noplaylist': True,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=False)
+                band_name, song_title = extract_band_song_from_metadata(info)
+        
+        # Save to cache if we got metadata
+        if video_id and band_name and song_title:
+            save_youtube_metadata(video_id, band_name, song_title)
+        
+        # Get genre from Spotify (uses caching)
         genre_hint = None
         try:
             raw_genres = get_genre_from_spotify(band_name, song_title, skip_swap_detection=False)
@@ -266,6 +267,8 @@ async def extract_metadata_quick(request: QuickMetadataRequest):
         }
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/generate-prompt-llm")
