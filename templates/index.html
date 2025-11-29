@@ -833,15 +833,69 @@
                 </small>
             </div>
             <div class="input-group">
-                <label for="promptVersion">Prompt Generation Version:</label>
-                <select id="promptVersion" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-family: inherit; width: 100%;">
-                    <option value="v1">V1 (Classic - Original Algorithm)</option>
-                    <option value="v3">V3 (Genre-Aware - Detailed Prompts)</option>
-                    <option value="v4" selected>V4 (Soul Capture - Best for Turbo ⭐)</option>
+                <label for="promptVersion">Prompt Generation Mode:</label>
+                <select id="promptVersion" style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px; font-family: inherit; width: 100%;" onchange="handleModeChange()">
+                    <option value="v1">V1 (Classic - Audio Analysis)</option>
+                    <option value="v3">V3 (Genre-Aware - Audio Analysis)</option>
+                    <option value="v4" selected>V4 (Soul Capture - Audio Analysis ⭐)</option>
+                    <option value="llm">🤖 LLM Mode (GPT-4o-mini - No Audio Analysis)</option>
                 </select>
-                <small style="color: #666; font-size: 0.9em; display: block; margin-top: 5px;">
+                <small id="modeDescription" style="color: #666; font-size: 0.9em; display: block; margin-top: 5px;">
                     💡 V4 captures the emotional soul of music with shorter, evocative prompts optimized for SDXL Turbo. Each song gets unique imagery!
                 </small>
+            </div>
+            
+            <!-- LLM Mode Inputs (hidden by default) -->
+            <div id="llmModeInputs" style="display: none; background: linear-gradient(135deg, #f8f9ff 0%, #fff5f8 100%); padding: 20px; border-radius: 12px; border: 2px solid #667eea; margin-top: 15px;">
+                <div style="display: flex; align-items: center; margin-bottom: 15px;">
+                    <span style="font-size: 1.5em; margin-right: 10px;">🤖</span>
+                    <div>
+                        <strong style="color: #667eea;">LLM Mode - Powered by GPT-4o-mini</strong>
+                        <p style="font-size: 0.85em; color: #666; margin-top: 3px;">No audio analysis needed. The AI understands music culture and generates visual prompts from metadata.</p>
+                    </div>
+                </div>
+                
+                <!-- API Key Input -->
+                <div class="input-group" style="margin-bottom: 15px;">
+                    <label for="llmApiKey">OpenAI API Key: <span style="color: #e74c3c;">*</span></label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="password" id="llmApiKey" placeholder="sk-..." style="flex: 1;" onchange="saveApiKey()" />
+                        <button type="button" onclick="toggleApiKeyVisibility()" style="padding: 10px 15px; border: 2px solid #667eea; background: white; border-radius: 8px; cursor: pointer; font-size: 14px;" title="Show/Hide">👁️</button>
+                        <button type="button" onclick="validateApiKey()" style="padding: 10px 15px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px;">Validate</button>
+                    </div>
+                    <div id="llmApiStatus" style="padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 0.85em; background: #f0f0f0; color: #666;">
+                        Enter your API key to get started
+                    </div>
+                    <small style="color: #666; font-size: 0.8em; display: block; margin-top: 5px;">
+                        🔒 Your key is stored locally in your browser and sent directly to OpenAI. 
+                        <a href="https://platform.openai.com/api-keys" target="_blank" style="color: #667eea;">Get API Key →</a>
+                    </small>
+                </div>
+                
+                <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+                
+                <div class="input-group">
+                    <label for="llmSongTitle">Song Title: <span style="color: #e74c3c;">*</span></label>
+                    <input type="text" id="llmSongTitle" placeholder="e.g., Blinding Lights" />
+                </div>
+                <div class="input-group">
+                    <label for="llmArtist">Artist/Band: <span style="color: #e74c3c;">*</span></label>
+                    <input type="text" id="llmArtist" placeholder="e.g., The Weeknd" />
+                </div>
+                <div class="input-group">
+                    <label for="llmGenre">Genre (optional):</label>
+                    <input type="text" id="llmGenre" placeholder="e.g., Synthwave, Pop, Rock" />
+                    <small style="color: #666; font-size: 0.85em;">Leave empty for AI to infer from artist/song</small>
+                </div>
+                <div class="input-group">
+                    <label for="llmCreativity">Creativity Level:</label>
+                    <input type="range" id="llmCreativity" min="0" max="100" value="80" style="width: 100%;" oninput="document.getElementById('creativityValue').textContent = this.value + '%'" />
+                    <div style="display: flex; justify-content: space-between; font-size: 0.85em; color: #666;">
+                        <span>Conservative</span>
+                        <span id="creativityValue">80%</span>
+                        <span>Creative</span>
+                    </div>
+                </div>
             </div>
             <div class="thumbnail-preview" id="thumbnailPreview">
                 <img id="thumbnailImage" alt="Video thumbnail" />
@@ -1157,6 +1211,274 @@
             }, 500);
         }
 
+        // Handle mode change between audio analysis and LLM mode
+        function handleModeChange() {
+            const mode = document.getElementById('promptVersion').value;
+            const llmInputs = document.getElementById('llmModeInputs');
+            const audioInputs = document.getElementById('audioDuration').parentElement;
+            const youtubeInput = document.getElementById('youtubeUrl').parentElement;
+            const thumbnailPreview = document.getElementById('thumbnailPreview');
+            const modeDescription = document.getElementById('modeDescription');
+            const generateBtn = document.getElementById('generatePromptBtn');
+            
+            if (mode === 'llm') {
+                // Show LLM inputs, hide audio-related inputs
+                llmInputs.style.display = 'block';
+                audioInputs.style.display = 'none';
+                youtubeInput.style.display = 'none';
+                thumbnailPreview.style.display = 'none';
+                generateBtn.textContent = '🤖 Generate Prompt with AI';
+                modeDescription.innerHTML = '🤖 <strong>LLM Mode:</strong> GPT-4o-mini generates prompts from song metadata. No audio download/analysis needed - instant results!';
+                modeDescription.style.background = 'linear-gradient(90deg, #f0f4ff, #fff0f5)';
+                modeDescription.style.padding = '10px';
+                modeDescription.style.borderRadius = '8px';
+                modeDescription.style.color = '#5a4670';
+                
+                // Load saved API key
+                loadApiKey();
+            } else {
+                // Show audio inputs, hide LLM inputs
+                llmInputs.style.display = 'none';
+                audioInputs.style.display = 'block';
+                youtubeInput.style.display = 'block';
+                thumbnailPreview.style.display = 'block';
+                generateBtn.textContent = 'Generate Prompt from Music';
+                modeDescription.style.background = 'none';
+                modeDescription.style.padding = '0';
+                modeDescription.style.color = '#666';
+                
+                // Update description based on version
+                const descriptions = {
+                    'v1': '📻 Original algorithm with classic prompt style.',
+                    'v3': '🎭 Genre-aware prompts with detailed visual descriptions.',
+                    'v4': '💡 V4 captures the emotional soul of music with shorter, evocative prompts optimized for SDXL Turbo. Each song gets unique imagery!'
+                };
+                modeDescription.innerHTML = descriptions[mode] || descriptions['v4'];
+            }
+        }
+        
+        // Save API key to localStorage
+        function saveApiKey() {
+            const apiKey = document.getElementById('llmApiKey').value.trim();
+            if (apiKey) {
+                localStorage.setItem('openai_api_key', apiKey);
+            }
+        }
+        
+        // Load API key from localStorage
+        function loadApiKey() {
+            const savedKey = localStorage.getItem('openai_api_key');
+            if (savedKey) {
+                document.getElementById('llmApiKey').value = savedKey;
+                updateApiKeyStatus('saved', 'Saved key loaded from browser storage');
+            }
+        }
+        
+        // Toggle API key visibility
+        function toggleApiKeyVisibility() {
+            const input = document.getElementById('llmApiKey');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+        
+        // Update API key status display
+        function updateApiKeyStatus(type, message) {
+            const statusDiv = document.getElementById('llmApiStatus');
+            const styles = {
+                'valid': { bg: '#d4edda', color: '#155724', icon: '✅' },
+                'invalid': { bg: '#f8d7da', color: '#721c24', icon: '❌' },
+                'checking': { bg: '#fff3cd', color: '#856404', icon: '⏳' },
+                'saved': { bg: '#e7f1ff', color: '#004085', icon: '💾' },
+                'default': { bg: '#f0f0f0', color: '#666', icon: '💡' }
+            };
+            const style = styles[type] || styles['default'];
+            statusDiv.innerHTML = `${style.icon} ${message}`;
+            statusDiv.style.background = style.bg;
+            statusDiv.style.color = style.color;
+        }
+        
+        // Validate API key with server
+        async function validateApiKey() {
+            const apiKey = document.getElementById('llmApiKey').value.trim();
+            
+            if (!apiKey) {
+                updateApiKeyStatus('invalid', 'Please enter an API key');
+                return;
+            }
+            
+            if (!apiKey.startsWith('sk-')) {
+                updateApiKeyStatus('invalid', 'Invalid format. API keys start with "sk-"');
+                return;
+            }
+            
+            updateApiKeyStatus('checking', 'Validating API key...');
+            
+            try {
+                const response = await fetch('/api/validate-api-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+                
+                const data = await response.json();
+                
+                if (data.valid) {
+                    updateApiKeyStatus('valid', `API key is valid! ${data.masked_key ? '(' + data.masked_key + ')' : ''}`);
+                    saveApiKey();
+                } else {
+                    updateApiKeyStatus('invalid', data.message || 'Invalid API key');
+                }
+            } catch (e) {
+                updateApiKeyStatus('invalid', 'Could not validate key. Check your connection.');
+            }
+        }
+        
+        // Generate prompt using LLM
+        async function generatePromptLLM() {
+            const songTitle = document.getElementById('llmSongTitle').value.trim();
+            const artist = document.getElementById('llmArtist').value.trim();
+            const genre = document.getElementById('llmGenre').value.trim();
+            const creativity = document.getElementById('llmCreativity').value / 100;
+            const apiKey = document.getElementById('llmApiKey').value.trim();
+            
+            if (!apiKey) {
+                showError('promptError', 'Please enter your OpenAI API key');
+                return null;
+            }
+            if (!apiKey.startsWith('sk-')) {
+                showError('promptError', 'Invalid API key format. Keys start with "sk-"');
+                return null;
+            }
+            if (!songTitle) {
+                showError('promptError', 'Please enter a song title');
+                return null;
+            }
+            if (!artist) {
+                showError('promptError', 'Please enter an artist name');
+                return null;
+            }
+            
+            const response = await fetch('/api/generate-prompt-llm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    song_title: songTitle,
+                    artist: artist,
+                    api_key: apiKey,
+                    genre: genre || null,
+                    temperature: creativity
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.detail || 'LLM generation failed');
+            }
+            
+            // Save API key on successful use
+            saveApiKey();
+            
+            return data;
+        }
+        
+        // Full LLM mode workflow
+        async function generatePromptLLMMode() {
+            const btn = document.getElementById('generatePromptBtn');
+            const loading = document.getElementById('promptLoading');
+            const error = document.getElementById('promptError');
+            const progressBar = document.getElementById('promptProgressBar');
+            const progressText = document.getElementById('promptProgressText');
+            const statusText = document.getElementById('promptStatus');
+            
+            // Validate inputs first
+            const apiKey = document.getElementById('llmApiKey').value.trim();
+            const songTitle = document.getElementById('llmSongTitle').value.trim();
+            const artist = document.getElementById('llmArtist').value.trim();
+            
+            if (!apiKey) {
+                showError('promptError', 'Please enter your OpenAI API key');
+                document.getElementById('llmApiKey').focus();
+                return;
+            }
+            if (!apiKey.startsWith('sk-')) {
+                showError('promptError', 'Invalid API key format. Keys start with "sk-"');
+                document.getElementById('llmApiKey').focus();
+                return;
+            }
+            if (!songTitle) {
+                showError('promptError', 'Please enter a song title');
+                return;
+            }
+            if (!artist) {
+                showError('promptError', 'Please enter an artist name');
+                return;
+            }
+            
+            btn.disabled = true;
+            loading.classList.add('active');
+            error.classList.remove('show');
+            
+            // Quick progress animation for LLM (it's fast!)
+            progressBar.style.width = '30%';
+            progressText.textContent = '30%';
+            statusText.innerHTML = '🤖 Sending to GPT-4o-mini...';
+            
+            try {
+                // Quick animation
+                setTimeout(() => {
+                    progressBar.style.width = '60%';
+                    progressText.textContent = '60%';
+                    statusText.innerHTML = '🎨 Generating visual prompt...';
+                }, 300);
+                
+                const data = await generatePromptLLM();
+                
+                // Complete
+                progressBar.style.width = '100%';
+                progressText.textContent = '100%';
+                statusText.innerHTML = '✅ Prompt generated!';
+                
+                // Display results
+                document.getElementById('prompt').value = data.prompt;
+                document.getElementById('negativePrompt').value = data.negative_prompt || '';
+                
+                // Show prompt section
+                document.getElementById('promptSection').style.display = 'block';
+                
+                // Scroll to prompt section
+                document.getElementById('promptSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                
+                // Show genre info if available
+                const genreInfo = document.getElementById('genreInfo');
+                if (data.genre_hint) {
+                    genreInfo.style.display = 'block';
+                    genreInfo.innerHTML = `<strong>🎭 Genre:</strong> ${data.genre_hint} | <strong>🤖 Generated by:</strong> ${data.llm_stats.model} (${data.llm_stats.tokens_used} tokens, ~$${data.llm_stats.estimated_cost_usd.toFixed(5)})`;
+                } else {
+                    genreInfo.style.display = 'block';
+                    genreInfo.innerHTML = `<strong>🤖 Generated by:</strong> ${data.llm_stats.model} in ${data.llm_stats.generation_time.toFixed(2)}s`;
+                }
+                
+                // Update features display (LLM mode doesn't have audio features)
+                const featuresDiv = document.getElementById('features');
+                featuresDiv.innerHTML = `
+                    <div style="text-align: center; padding: 15px; background: linear-gradient(135deg, #f8f9ff 0%, #fff5f8 100%); border-radius: 10px;">
+                        <span style="font-size: 1.5em;">🤖</span>
+                        <p style="margin: 10px 0 0 0; color: #5a4670;">
+                            <strong>LLM Mode</strong> - Prompt generated from song metadata<br>
+                            <small>Song: "${data.song}" by ${data.band}</small>
+                        </p>
+                    </div>
+                `;
+                
+            } catch (err) {
+                console.error('LLM generation error:', err);
+                showError('promptError', err.message);
+            } finally {
+                btn.disabled = false;
+                loading.classList.remove('active');
+            }
+        }
+
         // Progress bar animation for prompt generation
         function animatePromptProgress() {
             const progressBar = document.getElementById('promptProgressBar');
@@ -1206,6 +1528,13 @@
         }
 
         async function generatePrompt() {
+            const mode = document.getElementById('promptVersion').value;
+            
+            // Handle LLM mode separately
+            if (mode === 'llm') {
+                return generatePromptLLMMode();
+            }
+            
             const url = document.getElementById('youtubeUrl').value.trim();
             if (!url) {
                 showError('promptError', 'Please enter a YouTube URL');

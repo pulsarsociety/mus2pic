@@ -119,6 +119,19 @@ class ImageRequest(BaseModel):
     num_variations: int = 1
     model: str = "lcm"  # Model selection: lcm, sd14, sd21, turbo
 
+class LLMPromptRequest(BaseModel):
+    """Request model for LLM-based prompt generation (no audio analysis)"""
+    song_title: str
+    artist: str
+    api_key: str  # OpenAI API key provided by user
+    genre: Optional[str] = None
+    additional_context: Optional[str] = None  # e.g., "acoustic version", "live"
+    temperature: float = 0.8  # Creativity level (0.0-1.0)
+
+class ValidateAPIKeyRequest(BaseModel):
+    """Request model for API key validation"""
+    api_key: str
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve the main page"""
@@ -146,6 +159,88 @@ async def get_models():
         "success": True,
         "models": MODEL_REGISTRY
     }
+
+@app.post("/api/validate-api-key")
+async def validate_api_key(request: ValidateAPIKeyRequest):
+    """Validate an OpenAI API key provided by the user"""
+    try:
+        from llm_prompt_generator import validate_api_key
+        result = validate_api_key(request.api_key)
+        return {
+            "success": True,
+            **result
+        }
+    except ImportError as e:
+        return {
+            "success": False,
+            "valid": False,
+            "message": f"LLM module not available: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "valid": False,
+            "message": str(e)
+        }
+
+@app.post("/api/generate-prompt-llm")
+async def generate_prompt_llm(request: LLMPromptRequest):
+    """
+    Generate SDXL Turbo optimized prompt using GPT-4o-mini.
+    
+    This is an alternative to audio-based prompt generation.
+    Uses LLM reasoning to create visually evocative prompts from song metadata.
+    
+    No audio analysis needed - just provide song title, artist, API key, and optionally genre.
+    """
+    try:
+        song_title = request.song_title.strip()
+        artist = request.artist.strip()
+        api_key = request.api_key.strip()
+        genre = request.genre.strip() if request.genre else None
+        additional_context = request.additional_context.strip() if request.additional_context else None
+        temperature = min(max(request.temperature, 0.0), 1.0)  # Clamp to valid range
+        
+        if not song_title:
+            raise HTTPException(status_code=400, detail="Song title is required")
+        if not artist:
+            raise HTTPException(status_code=400, detail="Artist name is required")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="OpenAI API key is required")
+        
+        # Import and use LLM generator
+        from llm_prompt_generator import generate_prompt_with_llm
+        
+        prompt, generation_time, usage = generate_prompt_with_llm(
+            song_title=song_title,
+            artist=artist,
+            api_key=api_key,
+            genre=genre,
+            additional_context=additional_context,
+            temperature=temperature
+        )
+        
+        return {
+            "success": True,
+            "prompt": prompt,
+            "negative_prompt": "",  # SDXL Turbo doesn't use negative prompts
+            "song": song_title,
+            "band": artist,
+            "genre_hint": genre,
+            "generation_method": "llm",
+            "llm_stats": {
+                "model": usage["model"],
+                "generation_time": round(generation_time, 3),
+                "tokens_used": usage["total_tokens"],
+                "estimated_cost_usd": usage["estimated_cost_usd"]
+            }
+        }
+        
+    except ValueError as e:
+        # API key invalid
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM generation failed: {str(e)}")
 
 @app.post("/api/extract-metadata")
 async def extract_metadata(request: PromptRequest):
